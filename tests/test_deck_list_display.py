@@ -1,6 +1,7 @@
-from mtg_rebuilder.models.enums import DeckStatus
+from mtg_rebuilder.models.enums import DeckFormat, DeckStatus
 from mtg_rebuilder.ui.deck_list_display import (
     DeckListRow,
+    coerce_deck_format,
     coerce_deck_status,
     filter_deck_rows,
     sort_deck_rows,
@@ -14,6 +15,7 @@ def _row(
     sort_order: int,
     *,
     commander: str | None = None,
+    deck_format: DeckFormat = DeckFormat.COMMANDER,
 ) -> DeckListRow:
     return DeckListRow(
         id=deck_id,
@@ -24,6 +26,7 @@ def _row(
         commander_name=commander,
         has_warning=False,
         tooltip="",
+        format=deck_format,
     )
 
 
@@ -35,6 +38,15 @@ def test_coerce_deck_status_from_qt_userdata() -> None:
     assert coerce_deck_status(None) is None
     assert coerce_deck_status("nope") is None
     assert coerce_deck_status(1) is None
+
+
+def test_coerce_deck_format_from_qt_userdata() -> None:
+    assert coerce_deck_format("COMMANDER") is DeckFormat.COMMANDER
+    assert coerce_deck_format("OTHER") is DeckFormat.OTHER
+    assert coerce_deck_format(DeckFormat.COMMANDER) is DeckFormat.COMMANDER
+    assert coerce_deck_format(None) is None
+    assert coerce_deck_format("nope") is None
+    assert coerce_deck_format(1) is None
 
 
 def test_filter_deck_rows_by_status_and_search() -> None:
@@ -51,6 +63,26 @@ def test_filter_deck_rows_by_status_and_search() -> None:
 
     by_name = filter_deck_rows(rows, status=DeckStatus.ARMED, needle="char")
     assert [r.name for r in by_name] == ["Charlie"]
+
+
+def test_filter_deck_rows_by_format() -> None:
+    rows = [
+        _row(1, "Alpha", DeckStatus.ARMED, 0, deck_format=DeckFormat.COMMANDER),
+        _row(2, "Bravo", DeckStatus.DISMANTLED, 1, deck_format=DeckFormat.OTHER),
+        _row(3, "Charlie", DeckStatus.ARMED, 2, deck_format=DeckFormat.COMMANDER),
+    ]
+    commander = filter_deck_rows(
+        rows, status=None, needle="", deck_format=DeckFormat.COMMANDER
+    )
+    assert [r.name for r in commander] == ["Alpha", "Charlie"]
+
+    other = filter_deck_rows(
+        rows, status=None, needle="", deck_format=DeckFormat.OTHER
+    )
+    assert [r.name for r in other] == ["Bravo"]
+
+    all_formats = filter_deck_rows(rows, status=None, needle="")
+    assert [r.name for r in all_formats] == ["Alpha", "Bravo", "Charlie"]
 
 
 def test_sort_deck_rows_number_name_status() -> None:

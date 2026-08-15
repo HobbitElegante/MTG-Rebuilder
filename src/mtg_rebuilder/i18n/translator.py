@@ -168,6 +168,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.editions.skip": "Skip",
         "decks.import": "Import new list",
         "decks.name": "Deck name",
+        "decks.format": "Format",
+        "decks.format.commander": "EDH / Commander",
+        "decks.format.other": "Other (no rules yet)",
         "decks.commander": "Commander name (optional)",
         "decks.import.placeholder": (
             "Paste Moxfield / Archidekt / Arena / MTGO (.dek), or a Moxfield / Archidekt deck URL…"
@@ -244,6 +247,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.details.commander": "Commander: {name}",
         "decks.details.commander_none": "Commander: not set",
         "decks.details.secondary": "{role}: {name}",
+        "decks.details.format": "Format: {name}",
         "decks.role.partner": "Partner",
         "decks.role.companion": "Companion",
         "decks.role.background": "Background",
@@ -261,6 +265,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.filter.all": "All decks",
         "decks.filter.armed": "Armed only",
         "decks.filter.dismantled": "Dismantled only",
+        "decks.filter.format.all": "All formats",
         "decks.search": "Search by deck or commander…",
         "decks.sort.by": "Sort",
         "decks.sort.number": "Number",
@@ -332,6 +337,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "creating copies for cards that are new to the list."
         ),
         "decks.update.apply": "Apply update",
+        "decks.update.copies_hint": (
+            "Free = copies already in inventory. Raise it only if you need to add "
+            "physical copies (for example the lands that were missing from the list)."
+        ),
         "decks.delete_list": "Delete list",
         "decks.delete.confirm.title": "Delete deck list",
         "decks.delete.confirm.question": (
@@ -359,6 +368,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.edit.title": "Edit deck list",
         "decks.edit.save": "Save list",
         "decks.edit.total": "Cards in list: {current} / {target}",
+        "decks.edit.total_only": "Cards in list: {current}",
+        "decks.edit.size_mismatch": (
+            "List size is {current}; this format expects {target}. Saving is still allowed."
+        ),
         "decks.edit.slots": "Open slots: {slots}",
         "decks.edit.free": "Free",
         "decks.edit.replace": "Replace",
@@ -794,6 +807,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.editions.skip": "Omitir",
         "decks.import": "Importar listado nuevo",
         "decks.name": "Nombre del mazo",
+        "decks.format": "Formato",
+        "decks.format.commander": "EDH / Commander",
+        "decks.format.other": "Otro (sin reglas aún)",
         "decks.commander": "Nombre del commander (opcional)",
         "decks.import.placeholder": (
             "Pega Moxfield / Archidekt / Arena / MTGO (.dek), o una URL de mazo Moxfield / Archidekt…"
@@ -870,6 +886,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.details.commander": "Commander: {name}",
         "decks.details.commander_none": "Commander: sin definir",
         "decks.details.secondary": "{role}: {name}",
+        "decks.details.format": "Formato: {name}",
         "decks.role.partner": "Partner",
         "decks.role.companion": "Companion",
         "decks.role.background": "Background",
@@ -887,6 +904,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.filter.all": "Todos los mazos",
         "decks.filter.armed": "Solo armados",
         "decks.filter.dismantled": "Solo desarmados",
+        "decks.filter.format.all": "Todos los formatos",
         "decks.search": "Buscar por mazo o commander…",
         "decks.sort.by": "Orden",
         "decks.sort.number": "Número",
@@ -960,6 +978,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "copias físicas y se crean copias para las cartas nuevas del listado."
         ),
         "decks.update.apply": "Aplicar actualización",
+        "decks.update.copies_hint": (
+            "Libres = copias que ya tienes en inventario. Súbelas solo si necesitas "
+            "agregar copias físicas (por ejemplo las tierras que faltaban en el listado)."
+        ),
         "decks.delete_list": "Eliminar listado",
         "decks.delete.confirm.title": "Eliminar listado",
         "decks.delete.confirm.question": (
@@ -987,6 +1009,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.edit.title": "Editar listado del mazo",
         "decks.edit.save": "Guardar listado",
         "decks.edit.total": "Cartas en listado: {current} / {target}",
+        "decks.edit.total_only": "Cartas en listado: {current}",
+        "decks.edit.size_mismatch": (
+            "El listado tiene {current} cartas; este formato espera {target}. Aún puedes guardar."
+        ),
         "decks.edit.slots": "Huecos libres: {slots}",
         "decks.edit.free": "Libres",
         "decks.edit.replace": "Reemplazar",

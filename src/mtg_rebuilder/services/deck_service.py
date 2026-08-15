@@ -6,15 +6,20 @@ from mtg_rebuilder.algorithms.card_utils import is_scryfall_legality_issue
 from mtg_rebuilder.algorithms.commander_rules import (
     CommanderCard,
     CommanderRuleIssue,
-    evaluate_deck,
 )
 from mtg_rebuilder.algorithms.deck_stats import (
     DeckStatistics,
     DeckStatsCard,
     compute_deck_statistics,
 )
+from mtg_rebuilder.algorithms.format_rules import profile_for
 from mtg_rebuilder.models import CardCopy, Deck, DeckCard
-from mtg_rebuilder.models.enums import ActivityEventType, DeckCardRole, DeckStatus
+from mtg_rebuilder.models.enums import (
+    ActivityEventType,
+    DeckCardRole,
+    DeckFormat,
+    DeckStatus,
+)
 from mtg_rebuilder.repositories import CardRepository, CopyRepository, DeckRepository
 from mtg_rebuilder.services.activity_service import ActivityService
 
@@ -200,6 +205,14 @@ class DeckService:
         if deck is None:
             raise ValueError(f"Deck {deck_id} not found")
         deck.name = cleaned
+        self._decks.flush()
+        return deck
+
+    def set_format(self, deck_id: int, deck_format: DeckFormat) -> Deck:
+        deck = self.get_deck(deck_id)
+        if deck is None:
+            raise ValueError(f"Deck {deck_id} not found")
+        deck.format = deck_format
         self._decks.flush()
         return deck
 
@@ -719,6 +732,9 @@ class DeckService:
 
     def commander_rule_issues(self, deck_id: int) -> list[CommanderRuleIssue]:
         """Game-rule warnings for the list (advisory; never blocks arming)."""
+        deck = self.get_deck(deck_id)
+        if deck is None:
+            return []
         cards = [
             CommanderCard(
                 oracle_id=oracle_id,
@@ -741,4 +757,8 @@ class DeckService:
                 is_basic_land,
             ) in self._decks.commander_rule_rows(deck_id)
         ]
-        return evaluate_deck(cards)
+        return profile_for(deck.format).evaluate(cards)
+
+    def rule_issues(self, deck_id: int) -> list[CommanderRuleIssue]:
+        """Alias for :meth:`commander_rule_issues` (format-aware dispatch)."""
+        return self.commander_rule_issues(deck_id)

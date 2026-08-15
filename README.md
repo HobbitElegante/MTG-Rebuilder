@@ -2,9 +2,11 @@
 
 Desktop application to manage a physical Magic: The Gathering Commander collection and compute optimal deck reassembly plans using integer linear programming (OR-Tools).
 
-## Features (v1.0.0)
+## Features
 
-First stable release of **MTG-Rebuilder** (repo / package / binaries). The window title remains *MTG Commander Collection Manager*. Prebuilt **Downloads** are **v1.0.0** once the Release workflow for that tag finishes (until then `/releases/latest` may still show **v0.9.6**). Includes the rename from `mtg-sorter`, Inventory **Image view**, Linux **application-menu install**, and Optimize **Viable plans**.
+**MTG-Rebuilder** (repo / package / binaries). The window title remains *MTG Commander Collection Manager*.
+
+Prebuilt **Downloads** below track **`v1.1.0`** once that tag is published (free-size **Edit list**, per-deck **format tag**, Decks **Format** filter, **Update list** → qty/Free dialog). Until then, `/releases/latest` may still show **v1.0.0**.
 
 ### Collection
 
@@ -20,9 +22,10 @@ First stable release of **MTG-Rebuilder** (repo / package / binaries). The windo
 
 - Import with auto-detect: Moxfield MTGO, Archidekt, Arena, MTGO `.dek`, or public Moxfield / Archidekt URL
 - Armed / dismantled status with automatic physical-copy assignment
+- **Format tag** per deck (default **EDH / Commander**; stub Other with no rules yet). Shown in the deck list and details; picker on import and Edit name / commander
 - Command zone: commander plus optional Partner / Companion / Background
-- Edit list (fixed size), **Update list** (replace from paste/file/URL with diff preview), export (5 formats), delete
-- Search, filter by status, ephemeral sort (number / name / armed status), and reorder decks (Move up/down when sorted by number ascending)
+- **Edit list** (free size/quantities; `{current}/{target}` with a soft ⚠ if the format size does not match; never blocks save), **Update list** (paste/file/URL then the same qty + Free-copies table so you can add physical copies or keep inventory), export (5 formats), delete
+- Search, filter by **format** (All / EDH·Commander for now) and status, ephemeral sort (number / name / armed status), and reorder decks (Move up/down when sorted by number ascending)
 - Selected deck: commander preview, full card list, and preview of the selected card (Partner / Companion / Background appear in the list)
 - Card list display controls above the selected-card preview: sort by mana value or alphabetically (ascending/descending) and **group by type** (Command zone / Creatures / Instants / … / Lands headers)
 - Deck statistics around the commander: lands / x̄ mana value (with and without lands) / type breakdown / mana pips above, and a mana-curve bar chart below (creatures vs non-creature, lands excluded); both hide automatically when the window is small
@@ -104,20 +107,20 @@ In development, the SQLite database is created at `data/mtg_rebuilder.db` (gitig
 uv run pytest
 ```
 
-289 tests passing locally (includes path-migration cases after rename).
+299 tests passing locally (includes path-migration cases after rename).
 
 ## First-time setup
 
 1. Run the app.
 2. **Browse → Scryfall → Download oracle-cards bulk pack** (one-time, ~170 MB, requires network).
 3. Optional: **Use unique-artwork** for better default art; **Download images (collection)** for local JPEGs of owned/list cards.
-4. Import decks from the **Decks** tab (**Import new list**).
+4. Import decks from the **Decks** tab (**Import new list**). New lists default to **EDH / Commander**; you can change the format tag on import or later under **Edit name / commander**.
 5. Optional: **Browse → Customize** → switch language or theme (dark default; also light / system), toggle images / edition tracking / deck warnings, or edit the house banlist (all persisted).
 
 ## Importing a deck
 
 1. Open the **Decks** tab → **Import new list** (form fills the whole tab).
-2. Enter deck name and optional commander; use **+** for Partner, Companion, or Background if needed (a Moxfield URL can fill these for you).
+2. Enter deck name, **format** (default EDH / Commander), and optional commander; use **+** for Partner, Companion, or Background if needed (a Moxfield URL can fill commander/secondary for you).
 3. Paste the list, a public **Moxfield** or **Archidekt** deck URL, or click **Load file** (`.txt` / `.dek`).
 4. Click **Confirm list**. If you pasted a deck URL, the app downloads the deck, fills the form, and asks you to confirm again after review.
 5. Choose **Armed** or **Dismantled**:
@@ -130,18 +133,18 @@ Export from Moxfield: `More → Export → Copy for MTGO` (or paste the deck URL
 
 ## Editing, updating, exporting, and deleting decks
 
-- **Edit list:** table of cards with list quantity, free inventory (−/+), replace, and add cards into open slots (list size preserved). Cards that are banned / not legal / restricted in Commander show ⚠ on the right of the Name column (tooltip; advisory only).
-- **Update list:** opens the full-tab panel bound to the selected deck (name locked, command zone prefilled). Paste a list, load a file, or paste a Moxfield URL, then **Review update** shows cards to add / remove, the new card count, and any unrecognized lines (those are left out of the list). **Apply update** replaces the stored list — use this when the deck changed on Moxfield or an older import came in incomplete; the card count can grow or shrink. Armed decks are re-armed automatically (copies are created for cards new to the list).
-- **Edit name / commander:** rename the deck; set or clear the commander; use **+** to add Partner, Companion, or Background (second card field). Cards must be in the local Scryfall cache.
+- **Edit list:** table of cards with list quantity (−/+), free inventory (−/+), replace, and **Add** (no size cap). Header shows `{current}/{target}` for the deck’s format (e.g. 92/100 in Commander; Companion is excluded from the count) and a soft ⚠ if they differ — save is never blocked. Cards that are banned / not legal / restricted in Commander show ⚠ on the right of the Name column (tooltip; advisory only).
+- **Update list:** opens the full-tab panel bound to the selected deck (name locked, format locked, command zone prefilled). Paste a list, load a file, or paste a Moxfield / Archidekt URL, then **Review update** opens the same qty + **Free** table as Edit list (plus before→after count, unrecognized lines, and a hint to raise Free only when you need new physical copies). **Apply update** writes the new list and any Free-copy changes. Armed decks are re-armed automatically.
+- **Edit name / commander:** rename the deck; change the **format** tag; set or clear the commander; use **+** to add Partner, Companion, or Background (second card field). Cards must be in the local Scryfall cache.
 - **Export list:** opens a dialog with a format picker (MTGO / Moxfield / Arena / Archidekt / MTGGoldfish); copy to clipboard.
 - **Delete list:** choose how many removable copies to drop per card; copies on other armed decks are never removed.
-- **Filter / sort / reorder:** search by deck or commander name; show All, Armed only, or Dismantled only; sort by number, name, or armed/dismantled (ascending/descending — display only; does not rewrite saved order). Move up / Move down persists custom order and is enabled only when sorted by number ascending (reorder does not refresh Inventory/Browse).
-- Selected deck: summary under the deck list (coverage / commander / secondary); to the right, commander column · full card list · image of the selected card. Secondary command-zone cards are in the list (no dedicated preview column).
+- **Filter / sort / reorder:** search by deck or commander name; **Format** (All formats / EDH·Commander for now; more formats later); show All, Armed only, or Dismantled only; sort by number, name, or armed/dismantled (ascending/descending — display only; does not rewrite saved order). Move up / Move down persists custom order and is enabled only when sorted by number ascending (reorder does not refresh Inventory/Browse).
+- Selected deck: summary under the deck list (format, coverage / commander / secondary); to the right, commander column · full card list · image of the selected card. Secondary command-zone cards are in the list (no dedicated preview column). The deck list shows `[EDH / Commander] [Armed]` (or Other) next to each name.
 - Above the selected-card image (separated from the deck filter row by a divider): **Filter by** mana value / alphabetical plus an ascending/descending toggle, and **Group by type** — the list splits into Command zone / Creatures / Instants / Sorceries / Artifacts / Enchantments / Planeswalkers / Battles / Lands / Other headers (a multi-type card lands in its first bucket, e.g. artifact creatures under Creatures; any land under Lands). Display-only and per-session, like the deck sort.
 - The commander column also shows deck statistics on top (lands with basics; x̄ mana value without and with lands — hover for “x̄ = average”; type breakdown in a two-column grid; mana pips) and a mana-curve chart at the bottom (X = mana value 0–7+, Y = card count; green = creatures, blue = non-creature; lands excluded). If the window is too short, stats and chart hide so the commander image keeps its space.
-- Decks with format-legality or rule issues show ⚠ left of `[Armed|Dismantled]` (hover for details).
+- Decks with format-legality or rule issues show ⚠ left of `[EDH / Commander] [Armed|Dismantled]` (hover for details). Rules follow the deck’s format tag (Commander = 100 / singleton / identity; Other = no checks yet).
 
-Tip: **Edit list** keeps the list size fixed (open slots only); the dialog table grows when you resize the window. To add or remove cards beyond that — or to fully replace the list from Moxfield — use **Update list**.
+Tip: **Edit list** can grow or shrink the list (add forgotten lands, change quantities). Use **Update list** when you want to paste/sync a whole list from Moxfield or a file and review Free copies at the same time. The edit dialog table grows when you resize the window.
 
 ## Inventory
 
@@ -179,7 +182,7 @@ Tip: **Edit list** keeps the list size fixed (open slots only); the dialog table
 
 ```
 src/mtg_rebuilder/
-  algorithms/     # ILP deck dismantle optimizer, card helpers (incl. legality)
+  algorithms/     # ILP optimizer, Commander rules, format-rule profiles, card helpers
   api/            # Scryfall + Moxfield HTTP clients (bulk + CDN image download)
   database/       # SQLite + Alembic (session, migrate, alembic/versions)
   i18n/           # EN/ES translations
@@ -196,16 +199,17 @@ alembic.ini       # Dev CLI for new revisions (`alembic -c alembic.ini …`)
 
 **Changing the schema:** add a revision with `alembic -c alembic.ini revision --autogenerate -m "…"`, review it under `database/alembic/versions/`, then launch the app (migrations run on startup).
 
-## Latest (v1.0.0)
+## Latest (v1.1.0)
 
-**v1.0.0** is the first stable release of **MTG-Rebuilder** (GitHub repo, Python package `mtg_rebuilder`, CLI `mtg-rebuilder`, AppImage / Windows binaries). The window title stays *MTG Commander Collection Manager*. Existing user data under `mtg-sorter` is migrated automatically on first launch of a packaged build.
+**v1.1.0** folds the post-1.0 deck-format work into a minor release. The window title stays *MTG Commander Collection Manager*. Existing user data under `mtg-sorter` is still migrated automatically on first launch of a packaged build.
 
-- **Viable plans** (Optimize): explore simultaneous N-deck sets vs physical stock; cache / background calc; deck filter (viable decks only); collapsible combinations; commander images (side 3-column grid or inline image view); **Send to assembly plan**
-- Inventory **Image view** (virtualized grid; works with or without a prior table selection) and `scripts/install_linux_desktop.sh` (user-local `.desktop` + icon)
-- User-data dir / DB filename / env override: `mtg-rebuilder` / `mtg_rebuilder.db` / `MTG_REBUILDER_DATA_DIR` (legacy `MTG_SORTER_DATA_DIR` still accepted)
-- Browse Overview ASCII mark: **MTG-R** (was MTG-S)
+- Free-size **Edit list** (`{current}/{target}` soft ⚠; never blocks save)
+- Per-deck **format tag** (default **EDH / Commander**; stub Other with no rules yet) — list/detail tag; picker on import and Edit name / commander
+- Decks toolbar **Format** filter (All formats / EDH·Commander for now; in-memory with status + search)
+- **Update list** → qty + Free-copies dialog after paste (same table as Edit list)
+- **v1.0.0:** first stable **MTG-Rebuilder** rename; Inventory **Image view**; Linux `.desktop` install; Optimize **Viable plans**; ASCII **MTG-R**
 - **v0.9.6:** Default theme dark; Availability name-only placeholder; Filter tooltips localized
 - **v0.9.5:** Inventory rarity column/filter; Windows-safe combos; Issue templates
 - **v0.9.4:** Customize language/theme dropdowns fixed on Windows
 
-**Next:** editions v2 · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference).
+**Next:** commit/tag app icon · editions v2 · real rules for non-Commander formats · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference).

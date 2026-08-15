@@ -30,10 +30,11 @@ from PySide6.QtWidgets import (
 )
 
 from mtg_rebuilder.algorithms.card_utils import is_scryfall_legality_issue
+from mtg_rebuilder.algorithms.format_rules import profile_for
 from mtg_rebuilder.config import HOUSE_BANNED_LEGALITY
 from mtg_rebuilder.database import get_session
 from mtg_rebuilder.i18n import Translator
-from mtg_rebuilder.models.enums import DeckCardRole, DeckStatus
+from mtg_rebuilder.models.enums import DeckCardRole, DeckFormat, DeckStatus
 from mtg_rebuilder.services import BrowseService, ImportService, ScryfallService
 from mtg_rebuilder.services.browse_service import CardSummary
 from mtg_rebuilder.services.deck_export import (
@@ -71,6 +72,40 @@ _ROLE_I18N_KEY: dict[DeckCardRole, str] = {
     DeckCardRole.COMPANION: "decks.role.companion",
     DeckCardRole.BACKGROUND: "decks.role.background",
 }
+
+DECK_FORMAT_I18N: tuple[tuple[DeckFormat, str], ...] = (
+    (DeckFormat.COMMANDER, "decks.format.commander"),
+    (DeckFormat.OTHER, "decks.format.other"),
+)
+
+_QTY_STEPPER_HEADROOM = 99
+
+
+def populate_deck_format_combo(
+    combo: QComboBox,
+    translator: Translator,
+    *,
+    current: DeckFormat = DeckFormat.COMMANDER,
+) -> None:
+    """Fill ``combo`` with deck format tags; select ``current``."""
+    combo.clear()
+    for fmt, key in DECK_FORMAT_I18N:
+        combo.addItem(translator.t(key), fmt)
+    index = combo.findData(current)
+    if index >= 0:
+        combo.setCurrentIndex(index)
+
+
+def deck_format_from_combo(combo: QComboBox) -> DeckFormat:
+    data = combo.currentData()
+    if isinstance(data, DeckFormat):
+        return data
+    if isinstance(data, str):
+        try:
+            return DeckFormat(data)
+        except ValueError:
+            pass
+    return DeckFormat.COMMANDER
 
 
 class CommandZoneFields(QWidget):
@@ -250,17 +285,26 @@ class DeckDetailsDialog(QDialog):
         commander_name: str | None,
         secondary: tuple[DeckCardRole, str] | None = None,
         parent: QWidget | None = None,
+        *,
+        deck_format: DeckFormat = DeckFormat.COMMANDER,
     ) -> None:
         super().__init__(parent)
         self._translator = translator
         self.setWindowTitle(translator.t("decks.details_edit.title"))
-        self.resize(460, 220)
+        self.resize(460, 260)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self._name_input = QLineEdit(deck_name)
         self._name_input.setPlaceholderText(translator.t("decks.name"))
         form.addRow(translator.t("decks.name"), self._name_input)
+
+        self._format_combo = QComboBox()
+        configure_data_combo(self._format_combo)
+        populate_deck_format_combo(
+            self._format_combo, translator, current=deck_format
+        )
+        form.addRow(translator.t("decks.format"), self._format_combo)
         layout.addLayout(form)
 
         self._command_zone = CommandZoneFields(
@@ -285,6 +329,9 @@ class DeckDetailsDialog(QDialog):
 
     def deck_name(self) -> str:
         return self._name_input.text().strip()
+
+    def deck_format(self) -> DeckFormat:
+        return deck_format_from_combo(self._format_combo)
 
     def commander_name(self) -> str | None:
         return self._command_zone.commander_name()
@@ -1378,12 +1425,25 @@ class DeckEditDialog(QDialog):
         *,
         house_banned_ids: set[str] | None = None,
         show_legality_warnings: bool = True,
+        deck_format: DeckFormat = DeckFormat.COMMANDER,
+        title: str | None = None,
+        save_label: str | None = None,
+        summary_text: str | None = None,
+        hint_text: str | None = None,
+        armed_warning: str | None = None,
+        unresolved_lines: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
         self._translator = translator
         self._house_banned_ids = house_banned_ids or set()
         self._show_legality_warnings = show_legality_warnings
-        self._target_total = sum(row.quantity for row in rows)
+        self._deck_format = deck_format
+        self._target_size = profile_for(deck_format).target_size
+        self._save_label = save_label
+        self._summary_text = summary_text
+        self._hint_text = hint_text
+        self._armed_warning = armed_warning
+        self._unresolved_lines = unresolved_lines or []
         self._lines = [
             EditableDeckLine(
                 oracle_id=row.oracle_id,
@@ -1402,7 +1462,9 @@ class DeckEditDialog(QDialog):
         self._remove_copies: dict[str, int] = {}
         self._qty_steppers: list[QuantityStepper] = []
         self._free_steppers: list[QuantityStepper | None] = []
-        self.setWindowTitle(f"{self._translator.t('decks.edit.title')} — {deck_name}")
+        self.setWindowTitle(
+            title or f"{self._translator.t('decks.edit.title')} — {deck_name}"
+        )
         self._preview: CardPreviewPanel | None = None
         self.resize(1240 if card_images_enabled() else 960, 620)
         self._build_ui()
@@ -1410,12 +1472,37 @@ class DeckEditDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        if self._summary_text:
+            summary = QLabel(self._summary_text)
+            summary.setWordWrap(True)
+            layout.addWidget(summary)
+        if self._armed_warning:
+            armed_note = QLabel(self._armed_warning)
+            armed_note.setWordWrap(True)
+            layout.addWidget(armed_note)
+        if self._hint_text:
+            hint = QLabel(self._hint_text)
+            hint.setWordWrap(True)
+            layout.addWidget(hint)
+        if self._unresolved_lines:
+            layout.addWidget(
+                QLabel(
+                    self._translator.t("decks.update.unresolved").format(
+                        count=len(self._unresolved_lines)
+                    )
+                )
+            )
+            unresolved = QListWidget()
+            unresolved.addItems(self._unresolved_lines)
+            unresolved.setMaximumHeight(96)
+            layout.addWidget(unresolved)
         self._total_label = QLabel("")
-        self._slots_label = QLabel("")
+        self._size_warn_label = QLabel("")
+        self._size_warn_label.setVisible(False)
         header_row = QHBoxLayout()
         header_row.addWidget(self._total_label)
+        header_row.addWidget(self._size_warn_label)
         header_row.addStretch()
-        header_row.addWidget(self._slots_label)
         layout.addLayout(header_row)
 
         self._table = QTableWidget(0, 4)
@@ -1466,8 +1553,10 @@ class DeckEditDialog(QDialog):
         )
         save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         if save_button is not None:
-            save_button.setText(self._translator.t("decks.edit.save"))
-        buttons.accepted.connect(self._accept)
+            save_button.setText(
+                self._save_label or self._translator.t("decks.edit.save")
+            )
+        buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -1480,11 +1569,13 @@ class DeckEditDialog(QDialog):
         line = self._lines[row]
         self._preview.set_card(line.oracle_id, line.name)
 
-    def _current_total(self) -> int:
-        return sum(line.quantity for line in self._lines)
-
-    def _open_slots(self) -> int:
-        return max(0, self._target_total - self._current_total())
+    def _counted_total(self) -> int:
+        """List size for format rules (Companion excluded, same as commander_rules)."""
+        return sum(
+            line.quantity
+            for line in self._lines
+            if line.role != DeckCardRole.COMPANION
+        )
 
     def _line_display_legality(self, line: EditableDeckLine) -> str | None:
         if line.oracle_id in self._house_banned_ids:
@@ -1503,17 +1594,38 @@ class DeckEditDialog(QDialog):
         return format_card_legality_tooltip(line.name, legality, self._translator)
 
     def _update_header(self) -> None:
-        self._total_label.setText(
-            self._translator.t("decks.edit.total").format(
-                current=self._current_total(),
-                target=self._target_total,
+        current = self._counted_total()
+        target = self._target_size
+        if target is None:
+            self._total_label.setText(
+                self._translator.t("decks.edit.total_only").format(current=current)
             )
-        )
-        slots = self._open_slots()
-        self._slots_label.setText(
-            self._translator.t("decks.edit.slots").format(slots=slots)
-        )
-        self._add_button.setEnabled(slots > 0)
+            self._size_warn_label.clear()
+            self._size_warn_label.setVisible(False)
+            self._size_warn_label.setToolTip("")
+        else:
+            self._total_label.setText(
+                self._translator.t("decks.edit.total").format(
+                    current=current,
+                    target=target,
+                )
+            )
+            mismatched = current != target
+            self._size_warn_label.setVisible(mismatched)
+            if mismatched:
+                self._size_warn_label.setText(
+                    self._translator.t("decks.legality.warning")
+                )
+                self._size_warn_label.setToolTip(
+                    self._translator.t("decks.edit.size_mismatch").format(
+                        current=current,
+                        target=target,
+                    )
+                )
+            else:
+                self._size_warn_label.clear()
+                self._size_warn_label.setToolTip("")
+        self._add_button.setEnabled(True)
 
     def _rebuild_table(self) -> None:
         self._qty_steppers.clear()
@@ -1537,10 +1649,11 @@ class DeckEditDialog(QDialog):
                 )
             self._table.setCellWidget(row, 0, name_cell)
 
-            max_qty = line.quantity + self._open_slots()
-            stepper = QuantityStepper(max(max_qty, line.quantity, 1))
+            stepper = QuantityStepper(
+                max(line.quantity + _QTY_STEPPER_HEADROOM, line.quantity, 1)
+            )
             stepper.setMinimum(0)
-            stepper.setMaximum(max(max_qty, line.quantity))
+            stepper.setMaximum(max(line.quantity + _QTY_STEPPER_HEADROOM, line.quantity))
             stepper.setValue(line.quantity)
             stepper.valueChanged.connect(
                 lambda value, index=row: self._on_qty_changed(index, value)
@@ -1554,9 +1667,13 @@ class DeckEditDialog(QDialog):
                 self._table.setItem(row, 2, free_item)
                 self._free_steppers.append(None)
             else:
-                free_stepper = QuantityStepper(max(line.desired_free + 99, 99))
+                free_stepper = QuantityStepper(
+                    max(line.desired_free + _QTY_STEPPER_HEADROOM, _QTY_STEPPER_HEADROOM)
+                )
                 free_stepper.setMinimum(0)
-                free_stepper.setMaximum(max(line.desired_free + 99, 99))
+                free_stepper.setMaximum(
+                    max(line.desired_free + _QTY_STEPPER_HEADROOM, _QTY_STEPPER_HEADROOM)
+                )
                 free_stepper.setValue(line.desired_free)
                 free_stepper.valueChanged.connect(
                     lambda value, index=row: self._on_free_changed(index, value)
@@ -1569,12 +1686,6 @@ class DeckEditDialog(QDialog):
             self._table.setCellWidget(row, 3, replace)
 
         self._update_header()
-        self._refresh_stepper_maxima()
-
-    def _refresh_stepper_maxima(self) -> None:
-        slots = self._open_slots()
-        for line, stepper in zip(self._lines, self._qty_steppers, strict=True):
-            stepper.setMaximum(line.quantity + slots)
 
     def _on_free_changed(self, index: int, value: int) -> None:
         if index < 0 or index >= len(self._lines):
@@ -1585,7 +1696,7 @@ class DeckEditDialog(QDialog):
         line.desired_free = value
         stepper = self._free_steppers[index]
         if stepper is not None and value >= stepper.maximum() - 5:
-            stepper.setMaximum(value + 99)
+            stepper.setMaximum(value + _QTY_STEPPER_HEADROOM)
 
     def _on_qty_changed(self, index: int, value: int) -> None:
         if index < 0 or index >= len(self._lines):
@@ -1595,25 +1706,17 @@ class DeckEditDialog(QDialog):
             del self._lines[index]
             self._rebuild_table()
             return
-        # Prevent exceeding target
-        others = self._current_total() - line.quantity
-        if others + value > self._target_total:
-            capped = self._target_total - others
-            line.quantity = max(0, capped)
-            self._qty_steppers[index].setValue(line.quantity)
-            return
         line.quantity = value
+        stepper = self._qty_steppers[index]
+        if value >= stepper.maximum() - 5:
+            stepper.setMaximum(value + _QTY_STEPPER_HEADROOM)
         self._update_header()
-        self._refresh_stepper_maxima()
 
     def _add_card(self) -> None:
-        slots = self._open_slots()
-        if slots <= 0:
-            return
         dialog = CardPickDialog(
             self._translator,
             title=self._translator.t("decks.edit.add.title"),
-            max_quantity=slots,
+            max_quantity=_QTY_STEPPER_HEADROOM,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1670,16 +1773,6 @@ class DeckEditDialog(QDialog):
             commander_legality=picked.commander_legality,
         )
         self._rebuild_table()
-
-    def _accept(self) -> None:
-        if self._current_total() > self._target_total:
-            QMessageBox.warning(
-                self,
-                self._translator.t("common.error"),
-                self._translator.t("decks.edit.over_target"),
-            )
-            return
-        self.accept()
 
     def edit_lines(self) -> list[DeckEditLine]:
         return [

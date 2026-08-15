@@ -2,7 +2,7 @@ from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, UniqueConstra
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from mtg_rebuilder.models.base import Base
-from mtg_rebuilder.models.enums import DeckCardRole, DeckStatus
+from mtg_rebuilder.models.enums import DeckCardRole, DeckFormat, DeckStatus
 
 
 class Deck(Base):
@@ -13,6 +13,11 @@ class Deck(Base):
     status: Mapped[DeckStatus] = mapped_column(
         Enum(DeckStatus, native_enum=False),
         default=DeckStatus.DISMANTLED,
+        nullable=False,
+    )
+    format: Mapped[DeckFormat] = mapped_column(
+        Enum(DeckFormat, native_enum=False),
+        default=DeckFormat.COMMANDER,
         nullable=False,
     )
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

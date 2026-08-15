@@ -5,7 +5,7 @@ import pytest
 
 from mtg_rebuilder.models import Base, Card, CardAssignment, CardCopy, Deck, DeckCard
 from mtg_rebuilder.models.enums import DeckCardRole, DeckStatus
-from mtg_rebuilder.services.deck_service import DeckService
+from mtg_rebuilder.services.deck_service import DeckService, InventoryService
 from mtg_rebuilder.services.import_service import ImportService
 
 
@@ -278,6 +278,29 @@ def test_preview_deck_list_update_reports_quantity_changes(session: Session) -> 
         (6, 7, 1)
     ]
     assert preview.removed == []
+
+
+def test_preview_deck_list_update_builds_edit_rows_with_inventory(
+    session: Session,
+) -> None:
+    _add_cards(session, [("sol", "Sol Ring"), ("terror", "Terror"), ("vihaan", "Vihaan")])
+    deck = _add_deck(session, "Vihaan", [("sol", 1), ("terror", 1)])
+    InventoryService(session).add_copy("sol", 2, record_activity=False)
+
+    preview = ImportService(
+        session, _StrictFakeScryfall(session)
+    ).preview_deck_list_update(
+        deck.id,
+        "\n".join(["1 Sol Ring", "1 Vihaan"]),
+        commander_name="Vihaan",
+    )
+
+    by_id = {row.oracle_id: row for row in preview.edit_rows}
+    assert set(by_id) == {"sol", "vihaan"}
+    assert by_id["sol"].quantity == 1
+    assert by_id["sol"].free_copies == 2
+    assert by_id["vihaan"].role == DeckCardRole.COMMANDER
+    assert by_id["vihaan"].free_copies == 0
 
 
 def test_preview_deck_list_update_without_changes(session: Session) -> None:

@@ -5,11 +5,20 @@ from sqlalchemy.orm import Session
 from mtg_rebuilder.algorithms.card_utils import is_basic_land_name
 from mtg_rebuilder.api.archidekt_client import fetch_archidekt_deck
 from mtg_rebuilder.api.moxfield_client import fetch_moxfield_deck
-from mtg_rebuilder.models import Deck, DeckCard
-from mtg_rebuilder.models.enums import ActivityEventType, DeckCardRole, DeckStatus
-from mtg_rebuilder.repositories import CardRepository, DeckRepository
+from mtg_rebuilder.models import Card, Deck, DeckCard
+from mtg_rebuilder.models.enums import (
+    ActivityEventType,
+    DeckCardRole,
+    DeckFormat,
+    DeckStatus,
+)
+from mtg_rebuilder.repositories import CardRepository, CopyRepository, DeckRepository
 from mtg_rebuilder.services.activity_service import ActivityService
-from mtg_rebuilder.services.deck_service import DeckService, InventoryService
+from mtg_rebuilder.services.deck_service import (
+    DeckEditRow,
+    DeckService,
+    InventoryService,
+)
 from mtg_rebuilder.services.decklist_parser import (
     ARENA_SECTION_RE,
     CATEGORY_HEADER_RE,
@@ -95,6 +104,7 @@ class DeckListUpdatePreview:
     total_before: int
     total_after: int
     unresolved_lines: list[str]
+    edit_rows: list[DeckEditRow] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
@@ -119,6 +129,7 @@ class ImportService:
         self._scryfall = scryfall
         self._decks = DeckRepository(session)
         self._cards = CardRepository(session)
+        self._copies = CopyRepository(session)
 
     def resolve_decklist_input(
         self,
@@ -224,6 +235,7 @@ class ImportService:
         self,
         deck_id: int,
         text: str,
+        commander_name: str | None = None,
     ) -> DeckListUpdatePreview:
         """Diff a deck's current list against pasted text (or a Moxfield URL)."""
         deck = self._decks.get(deck_id)
@@ -232,7 +244,10 @@ class ImportService:
 
         resolved = self.resolve_decklist_input(text)
         parsed_lines = parse_decklist(resolved.text)
+        commander = commander_name or resolved.commander_name
 
+        after_roles: dict[tuple[str, DeckCardRole], int] = {}
+        after_cards: dict[str, Card] = {}
         after: dict[str, int] = {}
         names: dict[str, str] = {}
         unresolved: list[str] = []
@@ -248,12 +263,23 @@ class ImportService:
             # Tokens are not tracked on deck lists.
             if line.role == DeckCardRole.TOKEN or card.is_token:
                 continue
+            if is_basic_land_name(line.name):
+                card.is_basic_land = True
+            role = line.role
+            if commander and line.name.lower() == commander.lower():
+                role = DeckCardRole.COMMANDER
+            after_roles[(card.oracle_id, role)] = (
+                after_roles.get((card.oracle_id, role), 0) + line.quantity
+            )
             after[card.oracle_id] = after.get(card.oracle_id, 0) + line.quantity
+            after_cards[card.oracle_id] = card
             names[card.oracle_id] = card.name
 
         unresolved.extend(
             self._unparsed_lines(resolved.text, resolved.format, parsed_lines)
         )
+        if commander:
+            self._promote_commander_plan(after_roles, after_cards, commander)
 
         before: dict[str, int] = {}
         rows = self._decks.list_deck_cards_with_card(deck_id, order_by_name=False)
@@ -287,7 +313,64 @@ class ImportService:
             total_before=sum(before.values()),
             total_after=sum(after.values()),
             unresolved_lines=unresolved,
+            edit_rows=self._edit_rows_for_update(deck_id, after_roles, after_cards),
         )
+
+    def _promote_commander_plan(
+        self,
+        after_roles: dict[tuple[str, DeckCardRole], int],
+        after_cards: dict[str, Card],
+        commander_name: str,
+    ) -> None:
+        card = self._scryfall.lookup_local(commander_name)
+        if card is None:
+            return
+        main_qty = after_roles.get((card.oracle_id, DeckCardRole.MAIN), 0)
+        cmd_qty = after_roles.get((card.oracle_id, DeckCardRole.COMMANDER), 0)
+        if cmd_qty > 0 or main_qty <= 0:
+            return
+        after_roles[(card.oracle_id, DeckCardRole.COMMANDER)] = 1
+        leftover = main_qty - 1
+        if leftover > 0:
+            after_roles[(card.oracle_id, DeckCardRole.MAIN)] = leftover
+        else:
+            after_roles.pop((card.oracle_id, DeckCardRole.MAIN), None)
+        after_cards[card.oracle_id] = card
+
+    def _edit_rows_for_update(
+        self,
+        deck_id: int,
+        after_roles: dict[tuple[str, DeckCardRole], int],
+        after_cards: dict[str, Card],
+    ) -> list[DeckEditRow]:
+        if not after_roles:
+            return []
+        oracle_ids = {oracle_id for oracle_id, _role in after_roles}
+        free = InventoryService(self._session).free_counts()
+        assigned_here = self._copies.assigned_counts_for_deck(deck_id, oracle_ids)
+        rows: list[DeckEditRow] = []
+        for (oracle_id, role), quantity in after_roles.items():
+            if quantity <= 0:
+                continue
+            card = after_cards.get(oracle_id)
+            if card is None:
+                continue
+            rows.append(
+                DeckEditRow(
+                    oracle_id=oracle_id,
+                    name=card.name,
+                    quantity=quantity,
+                    role=role,
+                    free_copies=free.get(oracle_id, 0),
+                    is_basic_land=card.is_basic_land,
+                    is_token=card.is_token,
+                    removable_copies=(
+                        assigned_here.get(oracle_id, 0) + free.get(oracle_id, 0)
+                    ),
+                    commander_legality=card.commander_legality,
+                )
+            )
+        return sorted(rows, key=lambda row: (row.name.casefold(), row.role.value))
 
     def _unparsed_lines(
         self,
@@ -321,6 +404,7 @@ class ImportService:
         text: str,
         status: DeckStatus = DeckStatus.DISMANTLED,
         commander_name: str | None = None,
+        deck_format: DeckFormat = DeckFormat.COMMANDER,
     ) -> ImportResult:
         resolved = self.resolve_decklist_input(text)
         parsed_lines = parse_decklist(resolved.text)
@@ -328,6 +412,7 @@ class ImportService:
         deck = Deck(
             name=deck_name,
             status=status,
+            format=deck_format,
             sort_order=DeckService(self._session).next_sort_order(),
         )
         self._decks.add(deck)

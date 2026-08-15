@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from mtg_rebuilder.models.enums import DeckStatus
+from mtg_rebuilder.models.enums import DeckFormat, DeckStatus
 
 DeckSortKey = Literal["number", "name", "status"]
 
@@ -21,6 +21,7 @@ class DeckListRow:
     commander_name: str | None
     has_warning: bool
     tooltip: str
+    format: DeckFormat = DeckFormat.COMMANDER
 
 
 def coerce_deck_status(value: object) -> DeckStatus | None:
@@ -37,16 +38,33 @@ def coerce_deck_status(value: object) -> DeckStatus | None:
     return None
 
 
+def coerce_deck_format(value: object) -> DeckFormat | None:
+    """Normalize QComboBox userData (often a plain str) back to DeckFormat."""
+    if value is None:
+        return None
+    if isinstance(value, DeckFormat):
+        return value
+    if isinstance(value, str):
+        try:
+            return DeckFormat(value)
+        except ValueError:
+            return None
+    return None
+
+
 def filter_deck_rows(
     rows: list[DeckListRow],
     *,
     status: DeckStatus | None,
     needle: str,
+    deck_format: DeckFormat | None = None,
 ) -> list[DeckListRow]:
-    """Filter by armed/dismantled and casefold name/commander search."""
+    """Filter by format, armed/dismantled, and casefold name/commander search."""
     needle = needle.strip().casefold()
     result: list[DeckListRow] = []
     for row in rows:
+        if deck_format is not None and row.format != deck_format:
+            continue
         if status is not None and row.status != status:
             continue
         if needle:

@@ -6,6 +6,7 @@ from mtg_rebuilder.models.enums import (
     ActivityCategory,
     ActivityEventType,
     DeckCardRole,
+    DeckFormat,
     DeckStatus,
 )
 from mtg_rebuilder.models.house_ban import HouseBan
@@ -24,6 +25,7 @@ __all__ = [
     "Deck",
     "DeckCard",
     "DeckCardRole",
+    "DeckFormat",
     "DeckStatus",
     "HouseBan",
 ]

@@ -6,6 +6,13 @@ class DeckStatus(StrEnum):
     DISMANTLED = "DISMANTLED"
 
 
+class DeckFormat(StrEnum):
+    """Game format tag for a deck list (rules profiles hang off this)."""
+
+    COMMANDER = "COMMANDER"
+    OTHER = "OTHER"
+
+
 class DeckCardRole(StrEnum):
     MAIN = "MAIN"
     COMMANDER = "COMMANDER"

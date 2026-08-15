@@ -92,6 +92,7 @@ def test_fresh_database_runs_initial_migration(tmp_path: Path) -> None:
     assert "image_uri_back" in _card_columns(engine)
     assert "commander_legality" in _card_columns(engine)
     assert "sort_order" in _deck_columns(engine)
+    assert "format" in _deck_columns(engine)
 
 
 def test_legacy_database_is_bridged_and_stamped(legacy_engine) -> None:
@@ -133,6 +134,7 @@ def test_legacy_database_receives_migrations_past_the_baseline(legacy_engine) ->
     assert "card_prints" in set(inspect(legacy_engine).get_table_names())
     assert "house_bans" in set(inspect(legacy_engine).get_table_names())
     assert "is_locked" in _deck_columns(legacy_engine)
+    assert "format" in _deck_columns(legacy_engine)
     assert "rarity" in _card_columns(legacy_engine)
     assert "rarity" in {
         col["name"] for col in inspect(legacy_engine).get_columns("card_prints")

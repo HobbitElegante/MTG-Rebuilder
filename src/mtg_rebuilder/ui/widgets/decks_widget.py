@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from mtg_rebuilder.database import get_session
 from mtg_rebuilder.i18n import Translator
-from mtg_rebuilder.models.enums import DeckCardRole, DeckStatus
+from mtg_rebuilder.models.enums import DeckCardRole, DeckFormat, DeckStatus
 from mtg_rebuilder.services import (
     DeckService,
     HouseBanService,
@@ -52,6 +52,7 @@ from mtg_rebuilder.ui.deck_cards_display import (
 from mtg_rebuilder.ui.deck_list_display import (
     DeckListRow,
     DeckSortKey,
+    coerce_deck_format,
     coerce_deck_status,
     filter_deck_rows,
     sort_deck_rows,
@@ -62,12 +63,14 @@ from mtg_rebuilder.ui.widgets.deck_stats import DeckStatsColumn
 from mtg_rebuilder.ui.widgets.import_dialogs import (
     AvailableCopiesDialog,
     CommandZoneFields,
+    DECK_FORMAT_I18N,
     DeckDetailsDialog,
     DeckEditDialog,
-    DeckListUpdateDialog,
     DeleteDeckDialog,
     ExportDeckDialog,
     ImportStatusDialog,
+    deck_format_from_combo,
+    populate_deck_format_combo,
 )
 
 DECK_NAME_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -217,6 +220,7 @@ class DecksWidget(QWidget):
         super().__init__(parent)
         self._translator = translator
         self._status_filter: DeckStatus | None = None
+        self._format_filter: DeckFormat | None = None
         self._sort_key: DeckSortKey = "number"
         self._sort_ascending = True
         self._deck_rows: list[DeckListRow] = []
@@ -267,6 +271,7 @@ class DecksWidget(QWidget):
         self._move_down_button.setText(self._translator.t("decks.move_down"))
         self._lock_button.setText(self._translator.t("decks.lock"))
         self._search.setPlaceholderText(self._translator.t("decks.search"))
+        self._format_filter_label.setText(self._translator.t("decks.format"))
         self._filter_label.setText(self._translator.t("decks.filter.label"))
         self._sort_label.setText(self._translator.t("decks.sort.by"))
         self._cards_label.setText(self._translator.t("decks.cards.title"))
@@ -280,6 +285,7 @@ class DecksWidget(QWidget):
         self._commander_preview.retranslate()
         self._commander_column.retranslate()
         self._card_preview.retranslate()
+        self._retranslate_format_filter()
         self._retranslate_filter()
         self._retranslate_sort()
         if self._decks_loaded:
@@ -299,6 +305,21 @@ class DecksWidget(QWidget):
             )
         )
         self._submit_import_button.setText(self._translator.t("decks.update.submit"))
+
+    def _retranslate_format_filter(self) -> None:
+        # Only EDH/Commander for now; more formats can join this list later.
+        current = self._format_filter_combo.currentData()
+        self._format_filter_combo.blockSignals(True)
+        self._format_filter_combo.clear()
+        self._format_filter_combo.addItem(
+            self._translator.t("decks.filter.format.all"), None
+        )
+        self._format_filter_combo.addItem(
+            self._translator.t("decks.format.commander"), DeckFormat.COMMANDER
+        )
+        index = self._format_filter_combo.findData(current)
+        self._format_filter_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._format_filter_combo.blockSignals(False)
 
     def _retranslate_filter(self) -> None:
         current = self._filter_combo.currentData()
@@ -381,6 +402,13 @@ class DecksWidget(QWidget):
         # textChanged passes the string; do not bind _populate_deck_list directly
         # or that text becomes prefer_deck_id and forces a full detail reload.
         self._search.textChanged.connect(lambda _text: self._populate_deck_list())
+        self._format_filter_label = QLabel(self._translator.t("decks.format"))
+        self._format_filter_combo = QComboBox()
+        configure_data_combo(self._format_filter_combo)
+        self._retranslate_format_filter()
+        self._format_filter_combo.currentIndexChanged.connect(
+            self._on_format_filter_changed
+        )
         self._filter_label = QLabel(self._translator.t("decks.filter.label"))
         self._filter_combo = QComboBox()
         configure_data_combo(self._filter_combo)
@@ -398,6 +426,8 @@ class DecksWidget(QWidget):
         self._move_up_button.clicked.connect(lambda: self._move_selected(-1))
         self._move_down_button.clicked.connect(lambda: self._move_selected(1))
         filter_row.addWidget(self._search, 1)
+        filter_row.addWidget(self._format_filter_label)
+        filter_row.addWidget(self._format_filter_combo)
         filter_row.addWidget(self._filter_label)
         filter_row.addWidget(self._filter_combo)
         filter_row.addWidget(self._sort_label)
@@ -549,6 +579,11 @@ class DecksWidget(QWidget):
         self._name_input = QLineEdit()
         self._name_input.setPlaceholderText(self._translator.t("decks.name"))
         form.addRow(self._name_input)
+
+        self._format_combo = QComboBox()
+        configure_data_combo(self._format_combo)
+        populate_deck_format_combo(self._format_combo, self._translator)
+        form.addRow(self._translator.t("decks.format"), self._format_combo)
         import_layout.addLayout(form)
 
         self._command_zone = CommandZoneFields(
@@ -585,20 +620,34 @@ class DecksWidget(QWidget):
         self._main_layout.addWidget(self._import_group, 0)
 
     @staticmethod
+    def _format_label(deck_format: DeckFormat, translator: Translator) -> str:
+        for fmt, key in DECK_FORMAT_I18N:
+            if fmt is deck_format:
+                return translator.t(key)
+        return translator.t("decks.format.other")
+
+    @staticmethod
     def _format_deck_label(
-        index: int, name: str, status: DeckStatus, translator: Translator
+        index: int,
+        name: str,
+        status: DeckStatus,
+        deck_format: DeckFormat,
+        translator: Translator,
     ) -> tuple[str, str]:
         status_text = (
             translator.t("decks.status.armed")
             if status == DeckStatus.ARMED
             else translator.t("decks.status.dismantled")
         )
-        return f"{index}. {name}", f"[{status_text}]"
+        format_text = DecksWidget._format_label(deck_format, translator)
+        return f"{index}. {name}", f"[{format_text}] [{status_text}]"
 
     def _start_new_import(self) -> None:
         self._update_deck_id = None
         self._update_deck_name = ""
         self._name_input.setReadOnly(False)
+        self._format_combo.setEnabled(True)
+        populate_deck_format_combo(self._format_combo, self._translator)
         self._retranslate_import_panel()
         self._show_import_section()
         self._name_input.setFocus()
@@ -614,12 +663,21 @@ class DecksWidget(QWidget):
         self._update_deck_id = None
         self._update_deck_name = ""
         self._name_input.setReadOnly(False)
+        self._format_combo.setEnabled(True)
+        populate_deck_format_combo(self._format_combo, self._translator)
         self._retranslate_import_panel()
         self._import_group.setVisible(False)
         self._decks_group.setVisible(True)
         self._show_import_button.setVisible(True)
         self._main_layout.setStretchFactor(self._import_group, 0)
         self._main_layout.setStretchFactor(self._decks_group, 1)
+
+    def _on_format_filter_changed(self) -> None:
+        # PySide returns StrEnum userData as plain str — coerce, don't isinstance.
+        self._format_filter = coerce_deck_format(
+            self._format_filter_combo.currentData()
+        )
+        self._populate_deck_list()
 
     def _on_filter_changed(self) -> None:
         # PySide returns StrEnum userData as plain str — coerce, don't isinstance.
@@ -695,6 +753,7 @@ class DecksWidget(QWidget):
                         commander_name=commander_names.get(deck.id),
                         has_warning=has_warning,
                         tooltip="\n\n".join(tip_parts),
+                        format=deck.format,
                     )
                 )
         self._deck_rows = rows
@@ -716,6 +775,7 @@ class DecksWidget(QWidget):
             self._deck_rows,
             status=self._status_filter,
             needle=needle,
+            deck_format=self._format_filter,
         )
         visible = sort_deck_rows(
             visible,
@@ -729,7 +789,11 @@ class DecksWidget(QWidget):
         if not visible:
             empty_key = (
                 "decks.empty_filtered"
-                if self._status_filter is not None or needle.strip()
+                if (
+                    self._status_filter is not None
+                    or self._format_filter is not None
+                    or needle.strip()
+                )
                 else "decks.empty"
             )
             self._deck_list.addItem(self._translator.t(empty_key))
@@ -743,7 +807,7 @@ class DecksWidget(QWidget):
         restore_item: QListWidgetItem | None = None
         for index, deck in enumerate(visible, start=1):
             name_label, status_label = self._format_deck_label(
-                index, deck.name, deck.status, self._translator
+                index, deck.name, deck.status, deck.format, self._translator
             )
             item = QListWidgetItem(name_label)
             item.setData(Qt.ItemDataRole.UserRole, deck.id)
@@ -980,7 +1044,11 @@ class DecksWidget(QWidget):
             card_count = sum(card.quantity for card in deck.cards)
             commander = service.commander_name(deck_id)
             secondary = service.secondary_command_zone(deck_id)
-            lines: list[str] = []
+            lines: list[str] = [
+                self._translator.t("decks.details.format").format(
+                    name=self._format_label(deck.format, self._translator)
+                )
+            ]
             if deck.status == DeckStatus.ARMED:
                 lines.append(
                     self._translator.t("decks.details.armed").format(count=card_count)
@@ -1037,16 +1105,23 @@ class DecksWidget(QWidget):
             if deck is None:
                 return
             deck_name = deck.name
+            deck_format = deck.format
             commander = service.commander_name(deck_id)
             secondary = service.secondary_command_zone(deck_id)
 
         dialog = DeckDetailsDialog(
-            self._translator, deck_name, commander, secondary, self
+            self._translator,
+            deck_name,
+            commander,
+            secondary,
+            self,
+            deck_format=deck_format,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
         new_name = dialog.deck_name()
+        new_format = dialog.deck_format()
         new_commander = dialog.commander_name()
         secondary_role = dialog.secondary_role()
         secondary_name = dialog.secondary_name()
@@ -1054,6 +1129,7 @@ class DecksWidget(QWidget):
             with get_session() as session:
                 service = DeckService(session)
                 service.rename_deck(deck_id, new_name)
+                service.set_format(deck_id, new_format)
                 scryfall = ScryfallService(session)
                 try:
                     if new_commander is None:
@@ -1127,6 +1203,7 @@ class DecksWidget(QWidget):
             if deck is None:
                 return
             deck_name = deck.name
+            deck_format = deck.format
             rows = service.deck_edit_rows(deck_id)
             house_banned_ids = HouseBanService(session).oracle_ids()
             show_legality = SettingsService(session).get_show_legality_warnings()
@@ -1138,6 +1215,7 @@ class DecksWidget(QWidget):
             self,
             house_banned_ids=house_banned_ids,
             show_legality_warnings=show_legality,
+            deck_format=deck_format,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1173,6 +1251,7 @@ class DecksWidget(QWidget):
             if deck is None:
                 return
             deck_name = deck.name
+            deck_format = deck.format
             commander = service.commander_name(deck_id)
             secondary = service.secondary_command_zone(deck_id)
 
@@ -1180,6 +1259,10 @@ class DecksWidget(QWidget):
         self._update_deck_name = deck_name
         self._name_input.setText(deck_name)
         self._name_input.setReadOnly(True)
+        populate_deck_format_combo(
+            self._format_combo, self._translator, current=deck_format
+        )
+        self._format_combo.setEnabled(False)
         self._command_zone.clear()
         self._command_zone.set_commander_name(commander)
         if secondary is not None:
@@ -1210,12 +1293,17 @@ class DecksWidget(QWidget):
                 if deck is None:
                     return
                 deck_name = deck.name
+                deck_format = deck.format
                 armed = deck.status == DeckStatus.ARMED
+                house_banned_ids = HouseBanService(session).oracle_ids()
+                show_legality = SettingsService(session).get_show_legality_warnings()
                 scryfall = ScryfallService(session)
                 try:
                     preview = ImportService(
                         session, scryfall
-                    ).preview_deck_list_update(deck_id, text)
+                    ).preview_deck_list_update(
+                        deck_id, text, commander_name=commander
+                    )
                 finally:
                     scryfall.close()
         except Exception as exc:
@@ -1226,28 +1314,62 @@ class DecksWidget(QWidget):
             )
             return
 
-        dialog = DeckListUpdateDialog(
+        if not preview.has_changes and not preview.edit_rows:
+            QMessageBox.information(
+                self,
+                self._translator.t("decks.update_list"),
+                self._translator.t("decks.update.no_changes"),
+            )
+            return
+
+        dialog = DeckEditDialog(
             self._translator,
             deck_name,
-            preview,
-            armed=armed,
-            parent=self,
+            preview.edit_rows,
+            self,
+            house_banned_ids=house_banned_ids,
+            show_legality_warnings=show_legality,
+            deck_format=deck_format,
+            title=self._translator.t("decks.update.title").format(name=deck_name),
+            save_label=self._translator.t("decks.update.apply"),
+            summary_text=self._translator.t("decks.update.summary").format(
+                before=preview.total_before,
+                after=preview.total_after,
+            ),
+            hint_text=self._translator.t("decks.update.copies_hint"),
+            armed_warning=(
+                self._translator.t("decks.update.armed_warning") if armed else None
+            ),
+            unresolved_lines=preview.unresolved_lines,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
         try:
             with get_session() as session:
+                service = DeckService(session)
+                service.apply_deck_edit(
+                    deck_id,
+                    dialog.edit_lines(),
+                    create_free_copies=dialog.create_free_copies(),
+                    remove_copies=dialog.remove_copies(),
+                )
                 scryfall = ScryfallService(session)
                 try:
-                    importer = ImportService(session, scryfall)
-                    # preview.text is the already-expanded list (URL fetched once).
-                    warnings = importer.replace_deck_list(
-                        deck_id,
-                        preview.text,
-                        commander_name=commander,
-                    )
-                    if secondary_role is not None and secondary_name is not None:
+                    if commander is None:
+                        service.set_commander(deck_id, None)
+                    else:
+                        card = scryfall.lookup_local(commander)
+                        if card is None:
+                            raise ValueError(
+                                self._translator.t(
+                                    "decks.details_edit.commander_not_found"
+                                ).format(name=commander)
+                            )
+                        service.set_commander(deck_id, card.oracle_id)
+                    if secondary_role is None or secondary_name is None:
+                        service.set_secondary_command_zone(deck_id, None, None)
+                    else:
                         secondary_card = scryfall.lookup_local(secondary_name)
                         if secondary_card is None:
                             raise ValueError(
@@ -1255,7 +1377,7 @@ class DecksWidget(QWidget):
                                     "decks.details_edit.commander_not_found"
                                 ).format(name=secondary_name)
                             )
-                        DeckService(session).set_secondary_command_zone(
+                        service.set_secondary_command_zone(
                             deck_id, secondary_role, secondary_card.oracle_id
                         )
                 finally:
@@ -1267,15 +1389,6 @@ class DecksWidget(QWidget):
                 str(exc),
             )
             return
-
-        if warnings:
-            QMessageBox.warning(
-                self,
-                self._translator.t("common.error"),
-                "\n".join(
-                    f"{warning.line}: {warning.message}" for warning in warnings[:10]
-                ),
-            )
 
         self._name_input.clear()
         self._command_zone.clear()
@@ -1407,6 +1520,7 @@ class DecksWidget(QWidget):
                         text=text,
                         status=status,
                         commander_name=commander,
+                        deck_format=deck_format_from_combo(self._format_combo),
                     )
                     deck_service = DeckService(session)
                     if (

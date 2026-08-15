@@ -2,9 +2,7 @@
 
 Build portable binaries with **PyInstaller** (`onedir`). Linux wraps the folder in an **AppImage**. Windows produces `dist/MTG-Rebuilder/MTG-Rebuilder.exe` and zips it for distribution.
 
-**Version / tag:** metadatos = **`1.0.0`** (first stable: rename to MTG-Rebuilder + Inventory Image view + Linux desktop install + ASCII `MTG-R` + Viable plans).
-
-**Published binaries on GitHub:** still **`v0.9.6`** until the **`v1.0.0`** Release workflow completes green. Tag `v1.0.0` was pushed once and CI failed (`libEGL` via Inventory image-view tests); fix is `ui/inventory_image_layout.py` (Qt-free helpers) — commit on `main`, then **move/recreate** the tag (see below) so Actions rebuilds assets.
+**Version / tag:** **`1.1.0`** — free-size Edit list, per-deck format tag, Decks Format filter, Update list → qty/Free dialog. Push `v1.1.0` when ready so `/releases/latest` picks up the new AppImage + Windows zip. Until then friends may still see **`v1.0.0`**. Test count before tagging: `uv run pytest` (currently **299**).
 
 Published builds appear on the repository **Releases** page when a version tag is pushed.
 
@@ -49,6 +47,8 @@ Installs to:
 | Desktop entry | `~/.local/share/applications/mtg-rebuilder.desktop` |
 | Icon | `~/.local/share/icons/hicolor/256x256/apps/mtg-rebuilder.png` |
 
+Source icon in the repo: `packaging/mtg-rebuilder.png` (**256×256** RGBA). Used by AppImage + this install script only — **not** the Qt window icon when running `uv run mtg-rebuilder`.
+
 Does **not** touch the SQLite DB / card images (XDG user-data). The AppImage-embedded `packaging/mtg-rebuilder.desktop` is unchanged in role (`Exec=MTG-Rebuilder` for appimagetool).
 
 Without a repo checkout, friends can still `chmod +x` and run the AppImage from Downloads; the install script is the optional menu step.
@@ -73,29 +73,29 @@ CI builds and publishes automatically when you **push a version tag**. Binaries 
 ### Checklist (each version)
 
 1. Code ready on `main` — local tests green: `uv run pytest`.
-2. Version string in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` / README Features+Latest matches the tag you will create (e.g. `1.0.0`).
+2. Version string in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` / README Features+Latest matches the tag you will create (e.g. `1.1.0`).
 3. Commit and push:
    ```bash
    git push origin main
    ```
 4. Create and push the tag:
    ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag v1.1.0
+   git push origin v1.1.0
    ```
 5. Open the repo **Actions** tab — wait for the **Release** workflow (tests + Linux AppImage + Windows zip). Often ~10–20 minutes.
-6. Open **Releases** — `v1.0.0` should list the AppImage and the Windows zip.
+6. Open **Releases** — `v1.1.0` should list the AppImage and the Windows zip.
 7. Optional: edit the release notes.
 
 ### If the workflow fails
 
 1. Open the red job log in **Actions** and fix the issue on `main`.
-2. Either bump to a new tag (`v1.0.1`) after pushing the fix, or delete the bad tag and recreate it on the fixed commit (keeps the same version string):
+2. Either bump to a new tag (`v1.1.1`) after pushing the fix, or delete the bad tag and recreate it on the fixed commit (keeps the same version string):
    ```bash
-   git tag -d v1.0.0
-   git push origin :refs/tags/v1.0.0
-   git tag v1.0.0
-   git push origin v1.0.0
+   git tag -d v1.1.0
+   git push origin :refs/tags/v1.1.0
+   git tag v1.1.0
+   git push origin v1.1.0
    ```
 
 Known headless pitfalls already handled in `.github/workflows/release.yml`:
