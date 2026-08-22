@@ -1,7 +1,10 @@
 """Widget-level tests for the Inventory image grid.
 
-Skipped wherever PySide6 cannot be imported (CI headless runner has no libEGL);
-the Qt-free geometry helpers are covered by ``test_inventory_image_view.py``.
+Skipped wherever PySide6 cannot be imported; the CI runner has the package but
+not the Qt system libs, so the import fails with a plain ``ImportError``
+(``libEGL.so.1``) rather than ``ModuleNotFoundError``. ``pytest.importorskip``
+only catches the latter since pytest 9.1, hence the explicit guard below.
+The Qt-free geometry helpers are covered by ``test_inventory_image_view.py``.
 """
 
 import os
@@ -10,16 +13,17 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-pytest.importorskip("PySide6.QtWidgets")
+try:
+    from PySide6.QtCore import QEvent, QObject, Qt, Signal
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal  # noqa: E402
-from PySide6.QtGui import QKeyEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
-
-from mtg_rebuilder.i18n import Translator  # noqa: E402
-from mtg_rebuilder.services.browse_service import InventorySummaryRow  # noqa: E402
-from mtg_rebuilder.ui import inventory_image_layout as layout  # noqa: E402
-from mtg_rebuilder.ui.widgets import inventory_image_grid as grid_module  # noqa: E402
+    from mtg_rebuilder.i18n import Translator
+    from mtg_rebuilder.services.browse_service import InventorySummaryRow
+    from mtg_rebuilder.ui import inventory_image_layout as layout
+    from mtg_rebuilder.ui.widgets import inventory_image_grid as grid_module
+except ImportError as exc:  # pragma: no cover - headless CI without Qt libs
+    pytest.skip(f"PySide6 unavailable: {exc}", allow_module_level=True)
 
 GRID_WIDTH = 900
 

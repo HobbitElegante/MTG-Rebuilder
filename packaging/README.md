@@ -102,7 +102,7 @@ Known headless pitfalls already handled in `.github/workflows/release.yml`:
 
 - Do **not** install `pytest-qt` in the test job (it auto-loads Qt). Entry point name is `pytest-qt` (hyphen), not `pytestqt`.
 - `ui/__init__.py` must stay lazy so formatter tests do not import PySide6.
-- Layout helpers for Inventory image view live in `ui/inventory_image_layout.py` (no Qt). Widget tests for the grid (`tests/test_inventory_image_grid_widget.py`) import PySide6 behind `pytest.importorskip`, so they skip on the runner (no `libEGL`) and run locally with `QT_QPA_PLATFORM=offscreen`.
+- Layout helpers for Inventory image view live in `ui/inventory_image_layout.py` (no Qt). Widget tests for the grid (`tests/test_inventory_image_grid_widget.py`) run locally with `QT_QPA_PLATFORM=offscreen` and skip on the runner. Guard them with an explicit `try/except ImportError` + `pytest.skip(..., allow_module_level=True)`, **not** `pytest.importorskip`: PySide6 *is* installed on the runner and fails with a plain `ImportError: libEGL.so.1`, while `importorskip` only catches `ModuleNotFoundError` since pytest 9.1.
 - Linux build needs system libs (`libegl1`, …) because PyInstaller imports PySide6.
 
 ### Prerequisite
