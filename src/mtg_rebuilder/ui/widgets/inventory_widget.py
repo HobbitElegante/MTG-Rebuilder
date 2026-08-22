@@ -832,13 +832,17 @@ class InventoryWidget(QWidget):
             self._image_grid.set_rows(self._visible_rows)
             self._image_grid.select_oracle_id(selected_id)
             self._apply_selection(selected)
-            # Stacked switch often lays out after this call — sync once more.
-            QTimer.singleShot(0, self._image_grid.ensure_layout_sync)
+            # Stacked switch / empty preview often lay out a tick later — sync twice.
+            QTimer.singleShot(0, self._finish_image_view_switch)
         else:
             if selected_id is not None:
                 self._select_table_oracle_id(selected_id)
             else:
                 self._apply_selection(None)
+
+    def _finish_image_view_switch(self) -> None:
+        self._image_grid.ensure_layout_sync()
+        self._image_grid.setFocus()
 
     def _on_grid_card_selected(self, oracle_id: str) -> None:
         row = next((r for r in self._visible_rows if r.oracle_id == oracle_id), None)

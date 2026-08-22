@@ -46,6 +46,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.view.images": "Image view",
         "inventory.view.images_active": "Image view ✓",
         "inventory.view.sort_by": "Sort by",
+        "inventory.view.loading_image": "Oops! The image is still loading",
         "inventory.view.missing_image": (
             "Remember to update your collection images"
         ),
@@ -684,6 +685,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.view.images": "Vista imágenes",
         "inventory.view.images_active": "Vista imágenes ✓",
         "inventory.view.sort_by": "Ordenar por",
+        "inventory.view.loading_image": "¡Oops! Todavía está cargando la imagen",
         "inventory.view.missing_image": (
             "Recuerda actualizar las imágenes de tu colección"
         ),

@@ -6,14 +6,14 @@ Desktop application to manage a physical Magic: The Gathering Commander collecti
 
 **MTG-Rebuilder** (repo / package / binaries). The window title remains *MTG Commander Collection Manager*.
 
-Prebuilt **Downloads** below track **`v1.1.0`** once that tag is published (free-size **Edit list**, per-deck **format tag**, Decks **Format** filter, **Update list** → qty/Free dialog). Until then, `/releases/latest` may still show **v1.0.0**.
+Prebuilt **Downloads** below track **`v1.1.1`** once that tag is published (Inventory Image view: no more empty blocks after resizing, keyboard navigation, clearer loading tiles). Until then, `/releases/latest` still shows **v1.1.0**.
 
 ### Collection
 
 - Physical inventory in SQLite, grouped by card: total / free / assigned
 - Inventory table: Name · CMC · Colors (WUBRG) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
 - Search by card name; **Filter** dialog for type, armed-deck exclusion, color identity (`id≤`), **rarity (C/U/R/M)**, and mana value
-- **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview
+- **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; arrow-key navigation (Right continues on the next row) plus Home/End; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview
 - Add a single card or paste a whole list (multi-format / Moxfield or Archidekt URL) into free inventory
 - Optional **edition tracking**: turn it on in Browse → Customize to get an Edition column, per-copy set codes, and a prompt after rebuilding a deck
 - Card image preview beside the table (on-demand download; flip for double-faced cards)
@@ -107,7 +107,7 @@ In development, the SQLite database is created at `data/mtg_rebuilder.db` (gitig
 uv run pytest
 ```
 
-299 tests passing locally (includes path-migration cases after rename).
+312 tests passing locally (includes path-migration cases after rename). The Inventory image-grid widget tests need Qt: they run locally (`QT_QPA_PLATFORM=offscreen`) and skip automatically on the headless CI runner.
 
 ## First-time setup
 
@@ -152,7 +152,7 @@ Tip: **Edit list** can grow or shrink the list (add forgotten lands, change quan
 2. Table columns: **Name** · **CMC** · **Colors** · **Rarity** · **Total** · **Free** · **Assigned** · **In decks** (deck names only, or — if fully free). With edition tracking on, an **Edition** column appears. CMC is the numeric mana value (e.g. GGG → 3; hover the header for the full label). Colors show WUBRG identity (— if colorless). Name is the wide column.
 3. Click a column header to sort (text A–Z / Z–A; numbers high→low first, then reverse). Hover **In decks** for the full list when a card is in several decks.
 4. Use the search bar to filter by card name. **Filter** opens a dialog for type (search/add), hide cards in armed decks (all or specific), color identity at most (`id≤`), rarity (C/U/R/M), and mana-value comparisons.
-5. **Image view** *(next to Filter; requires card images enabled in Customize)* replaces the table with a scrollable grid (up to five faces per row). Missing local JPEGs download in the background as tiles appear. While Image view is on, **Sort by** and ascending/descending reorder the grid using the same keys as the table headers. Select a tile to refresh the side preview and the field list under it.
+5. **Image view** *(next to Filter; requires card images enabled in Customize)* replaces the table with a scrollable grid (up to five faces per row). Missing local JPEGs download in the background as tiles appear; a tile without art yet shows the card name and a loading note. Move with the arrow keys (Right past the end of a row continues on the leftmost card below), Home/End for the first/last card, and Enter to refresh the preview. While Image view is on, **Sort by** and ascending/descending reorder the grid using the same keys as the table headers. Select a tile to refresh the side preview and the field list under it.
 6. **Add new card to collection** — search the local Scryfall cache and add free copies (−/+). Basics and tokens are excluded (unlimited / not trackable).
 7. **Add list to collection** — opens a full-tab paste area (Load file · Confirm list · Cancel). After confirm, adjust how many copies to add per identified card (starts at 1; 0 or Remove excludes), replace mis-resolved cards, and on the right edit unrecognized lines then **Recheck** or **Remove** them. Confirm adds free inventory copies.
 8. Select a row (or a grid tile) → **Edit copy count** — change total physical copies (floor = copies assigned to armed decks).
@@ -199,17 +199,18 @@ alembic.ini       # Dev CLI for new revisions (`alembic -c alembic.ini …`)
 
 **Changing the schema:** add a revision with `alembic -c alembic.ini revision --autogenerate -m "…"`, review it under `database/alembic/versions/`, then launch the app (migrations run on startup).
 
-## Latest (v1.1.0)
+## Latest (v1.1.1)
 
-**v1.1.0** folds the post-1.0 deck-format work into a minor release. The window title stays *MTG Commander Collection Manager*. Existing user data under `mtg-sorter` is still migrated automatically on first launch of a packaged build.
+**v1.1.1** fixes the Inventory **Image view** and makes it keyboard-friendly.
 
-- Free-size **Edit list** (`{current}/{target}` soft ⚠; never blocks save)
-- Per-deck **format tag** (default **EDH / Commander**; stub Other with no rules yet) — list/detail tag; picker on import and Edit name / commander
-- Decks toolbar **Format** filter (All formats / EDH·Commander for now; in-memory with status + search)
-- **Update list** → qty + Free-copies dialog after paste (same table as Edit list)
+- **Empty blocks fixed:** tiles created while the grid was already on screen stayed hidden (Qt shows children of a visible parent only after `show()`), so resizing the window left whole bands blank until you scrolled
+- **Keyboard navigation:** arrow keys move card by card (Right past the end of a row continues on the leftmost card below), Home/End jump to the first/last card, Enter refreshes the preview
+- **Clearer tiles while loading:** a card without local art keeps the card frame and name and says the image is still loading, instead of showing an empty slot
+- Smoother scrolling (only tiles entering or leaving the viewport are remounted) and a larger overscan so fast scrolling has fewer gaps
+- Switching table → Image view with nothing selected, or after filtering to a shorter list, no longer leaves the grid blank
+- **v1.1.0:** free-size **Edit list**; per-deck **format tag**; Decks **Format** filter; **Update list** → qty/Free dialog
 - **v1.0.0:** first stable **MTG-Rebuilder** rename; Inventory **Image view**; Linux `.desktop` install; Optimize **Viable plans**; ASCII **MTG-R**
 - **v0.9.6:** Default theme dark; Availability name-only placeholder; Filter tooltips localized
 - **v0.9.5:** Inventory rarity column/filter; Windows-safe combos; Issue templates
-- **v0.9.4:** Customize language/theme dropdowns fixed on Windows
 
 **Next:** commit/tag app icon · editions v2 · real rules for non-Commander formats · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference).

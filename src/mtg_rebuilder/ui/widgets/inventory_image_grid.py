@@ -1,9 +1,10 @@
 """Scrollable inventory image grid (local cache only; no network downloads).
 
 Uses viewport virtualization: only tiles near the visible scroll window exist as
-widgets, so switching into Image view and scrolling stay responsive with ~1k+ cards.
-
-Layout math lives in ``ui.inventory_image_layout`` (Qt-free) for headless tests.
+widgets (viewport + several buffer rows). Scroll sync only mounts/recycles
+indices that changed — it does not re-decode or rescale art every pixel. Image
+loads are deferred so placeholders paint first. Layout math lives in
+``ui.inventory_image_layout`` (Qt-free) for headless tests.
 """
 
 from collections import OrderedDict
@@ -25,19 +26,21 @@ from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
 from mtg_rebuilder.ui.inventory_image_layout import (
     CAPTION_EXTRA,
+    GRID_COLUMNS,
     THUMB_MIN_WIDTH,
     TILE_PADDING,
     content_height,
     local_front_image_path,
+    move_grid_index,
     thumb_height_for_width,
     thumb_width_for_viewport,
+    tile_outer_size,
     tile_top_left,
     visible_index_range,
 )
 from mtg_rebuilder.ui.widgets.card_preview import image_loader
 
 _PIXMAP_CACHE_SIZE = 160
-_SYNC_DEBOUNCE_MS = 16
 
 _tile_owner_ids = count(1)
 
@@ -103,11 +106,14 @@ class _CardTile(QFrame):
         self._oracle_id = ""
         self._card_name = ""
         self._selected = False
+        self._placeholder_loading = True
         self._source_pixmap: QPixmap | None = None
         self._thumb_width = thumb_width
+        self._bind_generation = 0
         self.setObjectName("inventoryCardTile")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Keyboard arrows / Enter are handled by InventoryImageGrid.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -117,6 +123,9 @@ class _CardTile(QFrame):
         self._image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._image.setWordWrap(True)
         self._image.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        image_font = self._image.font()
+        image_font.setPointSize(max(8, image_font.pointSize() - 1))
+        self._image.setFont(image_font)
         layout.addWidget(self._image, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._caption = QLabel()
@@ -133,25 +142,46 @@ class _CardTile(QFrame):
     def oracle_id(self) -> str:
         return self._oracle_id
 
+    def card_name(self) -> str:
+        return self._caption.text()
+
     def owner_id(self) -> int:
         return self._owner
 
     def cancel_pending(self) -> None:
+        # Invalidate deferred load_image callbacks from a previous bind.
+        self._bind_generation += 1
         image_loader().cancel(self._owner)
 
     def bind(self, row: InventorySummaryRow, *, selected: bool) -> None:
+        """Attach a card to this tile.
+
+        Same-card rebinds are cheap (selection/caption only) so scroll sync can
+        call this without decoding or rescaling art on every pixel.
+        """
         same_card = row.oracle_id == self._oracle_id
-        if not same_card:
-            self.cancel_pending()
+        if same_card:
+            if self._caption.text() != row.card_name:
+                self._card_name = row.card_name
+                self._caption.setText(row.card_name)
+            self.set_selected(selected)
+            return
+
+        self.cancel_pending()
         self._oracle_id = row.oracle_id
         self._card_name = row.card_name
         self._caption.setText(row.card_name)
         self.set_selected(selected)
-        if same_card and self._source_pixmap is not None:
-            self._rescale()
-            return
         self._source_pixmap = None
-        self._show_placeholder()
+        self._show_placeholder(loading=True)
+        # Defer disk/network work so scroll can paint placeholders first.
+        self._bind_generation += 1
+        generation = self._bind_generation
+        QTimer.singleShot(0, lambda g=generation: self._load_after_bind(g))
+
+    def _load_after_bind(self, generation: int) -> None:
+        if generation != self._bind_generation:
+            return
         self.load_image_if_needed()
 
     def set_selected(self, selected: bool) -> None:
@@ -183,7 +213,7 @@ class _CardTile(QFrame):
                 self._source_pixmap = cached
                 self._rescale()
             else:
-                self._show_placeholder()
+                self._show_placeholder(loading=False)
             return
 
         pixmap = load_local_pixmap(self._oracle_id)
@@ -192,8 +222,8 @@ class _CardTile(QFrame):
             self._rescale()
             return
 
-        # Not on disk yet — empty slot, then ensure_image in the background.
-        self._show_placeholder()
+        # Not on disk yet — marked slot, then ensure_image in the background.
+        self._show_placeholder(loading=True)
         image_loader().request(self._owner, self._oracle_id, False)
 
     def apply_resolved(self, oracle_id: str, pixmap: QPixmap | None) -> None:
@@ -202,7 +232,7 @@ class _CardTile(QFrame):
         if pixmap is None or pixmap.isNull():
             mark_image_unavailable(oracle_id)
             self._source_pixmap = None
-            self._show_placeholder()
+            self._show_placeholder(loading=False)
             return
         _store_pixmap(oracle_id, pixmap)
         self._source_pixmap = pixmap
@@ -221,6 +251,7 @@ class _CardTile(QFrame):
             return
         self._image.setText("")
         self._image.setToolTip("")
+        self._apply_image_face_style(placeholder=False)
         self._image.setPixmap(
             self._source_pixmap.scaled(
                 QSize(self._thumb_width, thumb_height_for_width(self._thumb_width)),
@@ -229,11 +260,35 @@ class _CardTile(QFrame):
             )
         )
 
-    def _show_placeholder(self) -> None:
-        """Empty card-shaped slot while the image loads (or if ensure fails)."""
+    def _show_placeholder(self, *, loading: bool | None = None) -> None:
+        """Card-shaped slot with name + status while the image loads or if ensure fails."""
+        if loading is not None:
+            self._placeholder_loading = loading
+        key = (
+            "inventory.view.loading_image"
+            if self._placeholder_loading
+            else "inventory.view.missing_image"
+        )
+        message = self._translator.t(key)
         self._image.setPixmap(QPixmap())
-        self._image.setText("")
-        self._image.setToolTip(self._translator.t("inventory.view.missing_image"))
+        self._image.setText(message)
+        self._image.setToolTip(message)
+        self._apply_image_face_style(placeholder=True)
+
+    def _apply_image_face_style(self, *, placeholder: bool) -> None:
+        """Keep the face rectangle the same tile color whether art is present or not."""
+        if placeholder:
+            self._image.setStyleSheet(
+                "QLabel {"
+                " background: palette(base);"
+                " color: palette(text);"
+                " border: 1px solid palette(mid);"
+                " border-radius: 2px;"
+                " padding: 10px;"
+                "}"
+            )
+            return
+        self._image.setStyleSheet("")
 
     def _apply_style(self) -> None:
         border = "#4a90d9" if self._selected else "palette(mid)"
@@ -250,15 +305,6 @@ class _CardTile(QFrame):
         if event.button() == Qt.MouseButton.LeftButton and self._oracle_id:
             self.clicked.emit(self._oracle_id)
         super().mousePressEvent(event)
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if (
-            self._oracle_id
-            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space)
-        ):
-            self.clicked.emit(self._oracle_id)
-            return
-        super().keyPressEvent(event)
 
 
 class InventoryImageGrid(QScrollArea):
@@ -279,11 +325,7 @@ class InventoryImageGrid(QScrollArea):
         self._selected_oracle_id: str | None = None
         self._thumb_width = THUMB_MIN_WIDTH
         self._pending_rows: list[InventorySummaryRow] | None = None
-
-        self._sync_timer = QTimer(self)
-        self._sync_timer.setSingleShot(True)
-        self._sync_timer.setInterval(_SYNC_DEBOUNCE_MS)
-        self._sync_timer.timeout.connect(self._sync_visible_tiles)
+        self._last_viewport_size: tuple[int, int] = (0, 0)
 
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
@@ -295,9 +337,15 @@ class InventoryImageGrid(QScrollArea):
         self._populate_timer.setInterval(0)
         self._populate_timer.timeout.connect(self._flush_pending_rows)
 
+        self._geometry_sync_timer = QTimer(self)
+        self._geometry_sync_timer.setSingleShot(True)
+        self._geometry_sync_timer.setInterval(0)
+        self._geometry_sync_timer.timeout.connect(self._resync_if_geometry_changed)
+
         self.setWidgetResizable(False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
         self._container = QWidget()
@@ -317,10 +365,21 @@ class InventoryImageGrid(QScrollArea):
         else:
             self._thumb_width = self._compute_thumb_width()
             self._update_container_geometry()
+            self._clamp_scroll()
             self._sync_visible_tiles()
+        self._schedule_geometry_resync()
+        # Preview/layout can settle one tick later when nothing was selected.
+        QTimer.singleShot(0, self._remount_if_empty)
 
     def selected_oracle_id(self) -> str | None:
         return self._selected_oracle_id
+
+    def mounted_indices(self) -> list[int]:
+        """Flat indices that currently have a tile widget (visible window)."""
+        return sorted(self._tiles)
+
+    def tile_at(self, index: int) -> _CardTile | None:
+        return self._tiles.get(index)
 
     def select_oracle_id(self, oracle_id: str | None) -> None:
         self._selected_oracle_id = oracle_id
@@ -344,7 +403,88 @@ class InventoryImageGrid(QScrollArea):
         super().showEvent(event)
         if self._pending_rows is not None:
             self._flush_pending_rows()
-        self._schedule_sync()
+        else:
+            self._sync_visible_tiles()
+        self._schedule_geometry_resync()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        key = event.key()
+        if key in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Home,
+            Qt.Key.Key_End,
+        ):
+            if self._move_selection(key):
+                event.accept()
+                return
+        if (
+            key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space)
+            and self._selected_oracle_id
+        ):
+            self.card_selected.emit(self._selected_oracle_id)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _index_of_selected(self) -> int | None:
+        if self._selected_oracle_id is None:
+            return None
+        for index, row in enumerate(self._rows):
+            if row.oracle_id == self._selected_oracle_id:
+                return index
+        return None
+
+    def _move_selection(self, key: int) -> bool:
+        total = len(self._rows)
+        if total <= 0:
+            return False
+
+        current = self._index_of_selected()
+        if key == Qt.Key.Key_Home:
+            new_index = 0
+        elif key == Qt.Key.Key_End:
+            new_index = total - 1
+        elif current is None:
+            # First arrow with no selection → start of the list.
+            new_index = 0
+        elif key == Qt.Key.Key_Left:
+            new_index = move_grid_index(
+                current, d_col=-1, total=total, columns=GRID_COLUMNS, wrap=True
+            )
+        elif key == Qt.Key.Key_Right:
+            new_index = move_grid_index(
+                current, d_col=1, total=total, columns=GRID_COLUMNS, wrap=True
+            )
+        elif key == Qt.Key.Key_Up:
+            new_index = move_grid_index(
+                current, d_row=-1, total=total, columns=GRID_COLUMNS
+            )
+        elif key == Qt.Key.Key_Down:
+            new_index = move_grid_index(
+                current, d_row=1, total=total, columns=GRID_COLUMNS
+            )
+        else:
+            return False
+
+        if new_index is None:
+            return False
+
+        oracle_id = self._rows[new_index].oracle_id
+        self.select_oracle_id(oracle_id)
+        self._ensure_index_visible(new_index)
+        self._sync_visible_tiles()
+        self.card_selected.emit(oracle_id)
+        return True
+
+    def _ensure_index_visible(self, index: int) -> None:
+        x, y = tile_top_left(index, self._thumb_width)
+        tile_w, tile_h = tile_outer_size(self._thumb_width)
+        # Pin both corners so the full tile stays in the viewport.
+        self.ensureVisible(x, y, 1, 1)
+        self.ensureVisible(x + tile_w - 1, y + tile_h - 1, 1, 1)
 
     def _flush_pending_rows(self) -> None:
         if self._pending_rows is None:
@@ -354,11 +494,31 @@ class InventoryImageGrid(QScrollArea):
         self._rows = rows
         self._thumb_width = self._compute_thumb_width()
         self._update_container_geometry()
+        self._clamp_scroll()
         self._recycle_all_tiles()
+        self._sync_visible_tiles()
+        self._schedule_geometry_resync()
+
+    def _clamp_scroll(self) -> None:
+        """Keep the bar inside the new content range before mounting tiles."""
+        bar = self.verticalScrollBar()
+        bar.setValue(min(max(bar.value(), bar.minimum()), bar.maximum()))
+
+    def _remount_if_empty(self) -> None:
+        """Recover from stacked-switch races that left data but no tiles."""
+        if not self._rows or self._tiles or not self.isVisible():
+            return
+        self._thumb_width = self._compute_thumb_width()
+        self._update_container_geometry()
+        self._clamp_scroll()
         self._sync_visible_tiles()
 
     def _compute_thumb_width(self) -> int:
         return thumb_width_for_viewport(max(self.viewport().width(), 1))
+
+    def _viewport_size(self) -> tuple[int, int]:
+        vp = self.viewport()
+        return vp.width(), vp.height()
 
     def _update_container_geometry(self) -> None:
         width = max(self.viewport().width(), 1)
@@ -370,6 +530,7 @@ class InventoryImageGrid(QScrollArea):
         size_changed = width != self._thumb_width
         self._thumb_width = width
         self._update_container_geometry()
+        self._clamp_scroll()
         if size_changed:
             for tile in self._tiles.values():
                 tile.set_thumb_width(width)
@@ -378,12 +539,34 @@ class InventoryImageGrid(QScrollArea):
             # Positions depend on thumb size — remount.
             self._recycle_all_tiles()
         self._sync_visible_tiles()
+        self._last_viewport_size = self._viewport_size()
 
     def _on_scroll(self, _value: int) -> None:
-        self._schedule_sync()
+        # Mount immediately — debounce left a frame with recycled tiles and empty bands.
+        self._sync_visible_tiles()
 
-    def _schedule_sync(self) -> None:
-        self._sync_timer.start()
+    def _schedule_geometry_resync(self) -> None:
+        """Re-sync on the next tick if stacked layout changed viewport size."""
+        self._last_viewport_size = self._viewport_size()
+        self._geometry_sync_timer.start()
+
+    def _resync_if_geometry_changed(self) -> None:
+        size = self._viewport_size()
+        empty_but_has_rows = bool(self._rows) and not self._tiles
+        if (
+            size == self._last_viewport_size
+            and size[1] > 0
+            and not empty_but_has_rows
+        ):
+            return
+        self._thumb_width = self._compute_thumb_width()
+        self._update_container_geometry()
+        self._clamp_scroll()
+        self._sync_visible_tiles()
+        self._last_viewport_size = size
+        if self._rows and not self._tiles:
+            # Layout still not ready — try once more next tick.
+            QTimer.singleShot(0, self._remount_if_empty)
 
     def _recycle_all_tiles(self) -> None:
         for tile in self._tiles.values():
@@ -404,6 +587,8 @@ class InventoryImageGrid(QScrollArea):
             thumb_width=self._thumb_width,
         )
         tile.clicked.connect(self._on_tile_clicked)
+        # Children added to an already-visible parent stay hidden until shown.
+        tile.show()
         return tile
 
     def _sync_visible_tiles(self) -> None:
@@ -414,12 +599,15 @@ class InventoryImageGrid(QScrollArea):
             len(self._rows),
         )
         needed = set(range(start, end))
+        structure_changed = False
+
         for index in list(self._tiles):
             if index not in needed:
                 tile = self._tiles.pop(index)
                 tile.cancel_pending()
                 tile.hide()
                 self._pool.append(tile)
+                structure_changed = True
 
         for index in range(start, end):
             row = self._rows[index]
@@ -428,10 +616,22 @@ class InventoryImageGrid(QScrollArea):
             if tile is None:
                 tile = self._acquire_tile()
                 self._tiles[index] = tile
-            tile.bind(row, selected=selected)
-            x, y = tile_top_left(index, self._thumb_width)
-            tile.move(x, y)
-            tile.raise_()
+                tile.bind(row, selected=selected)
+                x, y = tile_top_left(index, self._thumb_width)
+                tile.move(x, y)
+                structure_changed = True
+                continue
+
+            # Index already mounted: keep art; only rebind if the card changed.
+            if tile.oracle_id() != row.oracle_id:
+                tile.bind(row, selected=selected)
+                structure_changed = True
+            else:
+                tile.set_selected(selected)
+
+        if structure_changed:
+            self._container.update()
+            self.viewport().update()
 
     def _on_image_resolved(
         self,
@@ -455,5 +655,6 @@ class InventoryImageGrid(QScrollArea):
             mark_image_unavailable(oracle_id)
 
     def _on_tile_clicked(self, oracle_id: str) -> None:
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
         self.select_oracle_id(oracle_id)
         self.card_selected.emit(oracle_id)

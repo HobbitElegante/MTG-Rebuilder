@@ -40,8 +40,8 @@ body:
     id: version
     attributes:
       label: Versión
-      description: Tag del Release (p. ej. v1.1.0) o “desde código” si corres con uv/Python.
-      placeholder: v1.1.0
+      description: Tag del Release (p. ej. v1.1.1) o “desde código” si corres con uv/Python.
+      placeholder: v1.1.1
     validations:
       required: true
   - type: textarea

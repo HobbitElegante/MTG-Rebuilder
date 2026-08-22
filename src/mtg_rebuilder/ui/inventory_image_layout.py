@@ -18,7 +18,10 @@ GRID_V_SPACING = 10
 GRID_MARGIN = 4
 THUMB_MIN_WIDTH = 140
 THUMB_MAX_WIDTH = 280
-SCROLL_BUFFER_ROWS = 1
+# Extra rows above/below the viewport so scroll rarely leaves empty bands.
+SCROLL_BUFFER_ROWS = 4
+# When the stacked view syncs before layout, still mount several rows.
+PRELAYOUT_MIN_ROWS = 3
 
 
 def grid_cell_position(index: int, columns: int = GRID_COLUMNS) -> tuple[int, int]:
@@ -26,6 +29,41 @@ def grid_cell_position(index: int, columns: int = GRID_COLUMNS) -> tuple[int, in
     if columns < 1:
         raise ValueError("columns must be >= 1")
     return divmod(index, columns)
+
+
+def move_grid_index(
+    index: int,
+    *,
+    d_row: int = 0,
+    d_col: int = 0,
+    total: int,
+    columns: int = GRID_COLUMNS,
+    wrap: bool = False,
+) -> int | None:
+    """Return a new flat index after a row/col step, or None if out of bounds.
+
+    Left/right use ``d_col`` (±1); with *wrap* they continue onto the next or
+    previous row (end of row -> leftmost card below). Up/down use ``d_row``
+    (±1) and keep the column.
+    """
+    if total <= 0 or columns < 1:
+        return None
+    if index < 0 or index >= total:
+        return None
+    if d_col and wrap:
+        new_index = index + d_col
+        if new_index < 0 or new_index >= total:
+            return None
+        return new_index
+    row, col = divmod(index, columns)
+    new_row = row + d_row
+    new_col = col + d_col
+    if new_col < 0 or new_col >= columns or new_row < 0:
+        return None
+    new_index = new_row * columns + new_col
+    if new_index >= total:
+        return None
+    return new_index
 
 
 def grid_row_count(n: int, columns: int = GRID_COLUMNS) -> int:
@@ -98,13 +136,18 @@ def visible_index_range(
     columns: int = GRID_COLUMNS,
     buffer_rows: int = SCROLL_BUFFER_ROWS,
 ) -> tuple[int, int]:
-    """Inclusive-start / exclusive-end flat indices that should be mounted."""
+    """Inclusive-start / exclusive-end flat indices that should be mounted.
+
+    Always returns a contiguous row-aligned window (no holes in the middle).
+    If *total* > 0 the window is never empty (stale scroll past the end is clamped).
+    """
     if total <= 0:
         return 0, 0
     # Stacked-widget switches can sync before layout gives a real height —
-    # still mount the first row so cards appear; resize refines the window.
+    # mount several leading rows so the first paint is not a grey void.
     if viewport_height <= 0:
-        return 0, min(total, columns * (1 + buffer_rows))
+        rows = max(PRELAYOUT_MIN_ROWS, 1 + buffer_rows)
+        return 0, min(total, columns * rows)
     stride = row_stride(thumb_width)
     if stride <= 0:
         return 0, total
@@ -114,6 +157,12 @@ def visible_index_range(
     )
     start = first_row * columns
     end = min(total, (last_row + 1) * columns)
+    if start >= total:
+        # Scroll still past the end after a shrink / stacked switch — last page.
+        rows_to_show = max(PRELAYOUT_MIN_ROWS, 1 + buffer_rows)
+        first_row = max(0, grid_row_count(total, columns) - rows_to_show)
+        start = first_row * columns
+        end = total
     return start, max(start, end)
 
 
