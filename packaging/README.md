@@ -47,7 +47,7 @@ Installs to:
 | Desktop entry | `~/.local/share/applications/mtg-rebuilder.desktop` |
 | Icon | `~/.local/share/icons/hicolor/256x256/apps/mtg-rebuilder.png` |
 
-Source icon in the repo: `packaging/mtg-rebuilder.png` (**256×256** RGBA). Used by AppImage + this install script only — **not** the Qt window icon when running `uv run mtg-rebuilder`.
+Source icon in the repo: `src/mtg_rebuilder/resources/app_icon.png` (**256×256** RGBA) — single source for the AppImage, this install script and the Qt window icon (`main.py` calls `setWindowIcon`, so `uv run` and the Windows exe get it too). It lives inside the package on purpose: the same path resolves from a checkout, a wheel and the PyInstaller bundle (the spec copies `resources/` into `mtg_rebuilder/resources`). On Wayland the compositor ignores that icon and matches `setDesktopFileName("mtg-rebuilder")` against the installed `.desktop` instead, so run the install script to see it there.
 
 Does **not** touch the SQLite DB / card images (XDG user-data). The AppImage-embedded `packaging/mtg-rebuilder.desktop` is unchanged in role (`Exec=MTG-Rebuilder` for appimagetool).
 

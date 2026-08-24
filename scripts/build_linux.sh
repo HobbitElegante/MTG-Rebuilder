@@ -54,8 +54,8 @@ chmod +x "$APPDIR/AppRun"
 
 cp "$ROOT/packaging/mtg-rebuilder.desktop" "$APPDIR/mtg-rebuilder.desktop"
 cp "$ROOT/packaging/mtg-rebuilder.desktop" "$APPDIR/usr/share/applications/mtg-rebuilder.desktop"
-cp "$ROOT/packaging/mtg-rebuilder.png" "$APPDIR/mtg-rebuilder.png"
-cp "$ROOT/packaging/mtg-rebuilder.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/mtg-rebuilder.png"
+cp "$ROOT/src/mtg_rebuilder/resources/app_icon.png" "$APPDIR/mtg-rebuilder.png"
+cp "$ROOT/src/mtg_rebuilder/resources/app_icon.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/mtg-rebuilder.png"
 
 echo "==> Building AppImage"
 rm -f "$OUT_APPIMAGE"

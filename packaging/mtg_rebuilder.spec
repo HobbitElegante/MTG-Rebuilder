@@ -9,9 +9,11 @@ block_cipher = None
 
 ROOT = Path(SPECPATH).resolve().parent
 ALEMBIC_DIR = ROOT / "src" / "mtg_rebuilder" / "database" / "alembic"
+RESOURCES_DIR = ROOT / "src" / "mtg_rebuilder" / "resources"
 
 datas = [
     (str(ALEMBIC_DIR), "mtg_rebuilder/database/alembic"),
+    (str(RESOURCES_DIR), "mtg_rebuilder/resources"),
 ]
 binaries = []
 hiddenimports = [

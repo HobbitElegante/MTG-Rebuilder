@@ -13,7 +13,7 @@ DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$DESKTOP_DIR/mtg-rebuilder.desktop"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
 ICON_FILE="$ICON_DIR/mtg-rebuilder.png"
-PACKAGING_ICON="$ROOT/packaging/mtg-rebuilder.png"
+PACKAGING_ICON="$ROOT/src/mtg_rebuilder/resources/app_icon.png"
 # Previous install layout (pre-rename); cleaned on uninstall / overwritten on install.
 LEGACY_INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/mtg-sorter"
 LEGACY_DESKTOP_FILE="$DESKTOP_DIR/mtg-sorter.desktop"
@@ -88,7 +88,7 @@ install_icon() {
   if extract_icon_from_appimage "$appimage"; then
     return 0
   fi
-  echo "warning: could not install icon (packaging/mtg-rebuilder.png missing and AppImage extract failed)" >&2
+  echo "warning: could not install icon ($PACKAGING_ICON missing and AppImage extract failed)" >&2
   return 1
 }
 
