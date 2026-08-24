@@ -1,8 +1,13 @@
-"""Local inventory panel filters (type / color / rarity / mana value / armed decks).
+"""Local inventory panel filters (type / subtype / color / rarity / mana value / decks).
 
 Independent of Scryfall syntax. Color identity uses Scryfall ``id<=`` semantics:
 at most the selected colors (colorless included). Zero or all five color
 checkboxes means no color filter.
+
+Types and subtypes are two separate groups: OR inside each one, AND between
+them, so ``Creature`` + ``Elf`` means "elf creatures". Subtypes are whatever
+follows the em dash of a type line, tokenized by word — good enough for the
+single-word types that cover almost every card.
 
 Rarity uses Scryfall print rarities (``common`` / ``uncommon`` / ``rare`` /
 ``mythic``). UI letters C/U/R/M; empty or all four = no filter. Match is OR
@@ -47,6 +52,11 @@ CARD_TYPE_OPTIONS: tuple[str, ...] = (
 
 CMC_OPS: tuple[str, ...] = ("=", "!=", "<", "<=", ">", ">=")
 
+# Type lines separate supertypes/types from subtypes with an em dash; a few
+# sources use the en dash or a plain hyphen instead.
+_SUBTYPE_SEPARATORS = ("—", "–", " - ")
+_FACE_SEPARATOR = "//"
+
 
 class FilterableCard(Protocol):
     oracle_id: str
@@ -56,6 +66,7 @@ class FilterableCard(Protocol):
     cmc: float | None
     rarities: frozenset[str]
     assigned_deck_ids: frozenset[int]
+    free_copies: int
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,8 @@ class InventoryFilterState:
     """Active panel filters. Empty collections / inactive color set = no filter."""
 
     types: frozenset[str] = frozenset()
+    # Subtypes (past the em dash). OR between them, AND against `types`.
+    subtypes: frozenset[str] = frozenset()
     # Subset of WUBRG. Empty or all five → no color filter.
     colors: frozenset[str] = frozenset()
     # Subset of RARITY_CODES (C/U/R/M). Empty or all four → no rarity filter.
@@ -78,6 +91,8 @@ class InventoryFilterState:
     exclude_any_armed: bool = False
     # Hide cards with a physical assignment to any of these deck ids.
     exclude_deck_ids: frozenset[int] = frozenset()
+    # Keep only cards with at least one unassigned (free) copy.
+    only_with_free: bool = False
 
     @property
     def color_filter_active(self) -> bool:
@@ -91,11 +106,13 @@ class InventoryFilterState:
     def is_active(self) -> bool:
         return (
             bool(self.types)
+            or bool(self.subtypes)
             or self.color_filter_active
             or self.rarity_filter_active
             or bool(self.cmc_conditions)
             or self.exclude_any_armed
             or bool(self.exclude_deck_ids)
+            or self.only_with_free
         )
 
 
@@ -146,6 +163,41 @@ def matches_type_line(type_line: str | None, selected: frozenset[str]) -> bool:
     return False
 
 
+def subtypes_of(type_line: str | None) -> frozenset[str]:
+    """Words past the em dash, per face. ``Creature — Elf Druid`` → Elf, Druid."""
+    if not type_line:
+        return frozenset()
+    found: set[str] = set()
+    for face in type_line.split(_FACE_SEPARATOR):
+        tail = ""
+        for separator in _SUBTYPE_SEPARATORS:
+            if separator in face:
+                tail = face.split(separator, 1)[1]
+                break
+        for word in tail.split():
+            cleaned = word.strip()
+            if cleaned:
+                found.add(cleaned)
+    return frozenset(found)
+
+
+def subtype_catalog(type_lines: Sequence[str | None]) -> tuple[str, ...]:
+    """Sorted subtypes present in the collection, for the picker."""
+    seen: dict[str, str] = {}
+    for line in type_lines:
+        for subtype in subtypes_of(line):
+            seen.setdefault(subtype.casefold(), subtype)
+    return tuple(sorted(seen.values(), key=str.casefold))
+
+
+def matches_subtypes(type_line: str | None, selected: frozenset[str]) -> bool:
+    """OR match against the card's subtypes (case-insensitive)."""
+    if not selected:
+        return True
+    have = {subtype.casefold() for subtype in subtypes_of(type_line)}
+    return any(wanted.casefold() in have for wanted in selected)
+
+
 def matches_color_identity_at_most(
     color_identity: str | None, allowed: frozenset[str]
 ) -> bool:
@@ -166,6 +218,10 @@ def matches_rarity(
 
 def matches_panel_filters(card: FilterableCard, state: InventoryFilterState) -> bool:
     if state.types and not matches_type_line(card.type_line, state.types):
+        return False
+    if state.subtypes and not matches_subtypes(card.type_line, state.subtypes):
+        return False
+    if state.only_with_free and card.free_copies <= 0:
         return False
     if state.color_filter_active:
         if not matches_color_identity_at_most(card.color_identity, state.colors):

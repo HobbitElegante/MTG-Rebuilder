@@ -26,7 +26,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mtg_rebuilder.algorithms.inventory_filters import filter_inventory_cards
+from mtg_rebuilder.algorithms.inventory_filters import (
+    filter_inventory_cards,
+    subtype_catalog,
+)
 from mtg_rebuilder.api.scryfall_client import ScryfallClient
 from mtg_rebuilder.database import get_session
 from mtg_rebuilder.i18n import Translator
@@ -624,6 +627,9 @@ class InventoryWidget(QWidget):
                 for deck in DeckService(session).list_decks(status=DeckStatus.ARMED)
             ]
         self._filter_dialog.set_armed_decks(armed)
+        self._filter_dialog.set_subtypes(
+            subtype_catalog([row.type_line for row in self._rows])
+        )
         self._populate_table()
 
     def _on_header_clicked(self, column: int) -> None:
@@ -790,6 +796,9 @@ class InventoryWidget(QWidget):
                 for deck in DeckService(session).list_decks(status=DeckStatus.ARMED)
             ]
         self._filter_dialog.set_armed_decks(armed)
+        self._filter_dialog.set_subtypes(
+            subtype_catalog([row.type_line for row in self._rows])
+        )
         self._filter_dialog.retranslate()
         self._filter_dialog.show()
         self._filter_dialog.raise_()

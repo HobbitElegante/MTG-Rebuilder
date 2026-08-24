@@ -53,14 +53,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.view.details_empty": "Select a card to see its details.",
         "inventory.filters.title": "Inventory filters",
         "inventory.filters.close": "Close",
+        "inventory.filters.availability": "Availability",
+        "inventory.filters.availability_hint": (
+            "Free copies are the ones not assigned to an armed deck."
+        ),
+        "inventory.filters.only_free": "Only cards with free copies",
         "inventory.filters.type": "Type",
         "inventory.filters.type_hint": (
-            "Search a type, then Add. Remove from the list below. Matching is OR."
+            "Check one or more types; a card matching any of them is kept (OR)."
         ),
-        "inventory.filters.type_search": "Find a type…",
-        "inventory.filters.type_selected": "Selected types",
-        "inventory.filters.type_add": "Add",
-        "inventory.filters.type_remove": "Remove",
+        "inventory.filters.subtypes": "Subtype",
+        "inventory.filters.subtypes_hint": (
+            "Whatever follows the em dash of a type line: Elf, Equipment, Aura… "
+            "Only subtypes present in your collection are offered. "
+            "Any of them matches (OR), and they narrow the checked types."
+        ),
+        "inventory.filters.subtypes_search": "Find a subtype (Elf, Aura…)",
+        "inventory.filters.subtypes_selected": "Selected subtypes",
+        "inventory.filters.subtypes_add": "Add",
+        "inventory.filters.subtypes_remove": "Remove",
         "inventory.filters.decks": "Armed decks",
         "inventory.filters.decks_hint": (
             "Hide cards with a physical copy assigned to armed decks. "
@@ -692,15 +703,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.view.details_empty": "Selecciona una carta para ver sus datos.",
         "inventory.filters.title": "Filtros de inventario",
         "inventory.filters.close": "Cerrar",
+        "inventory.filters.availability": "Disponibilidad",
+        "inventory.filters.availability_hint": (
+            "Las copias libres son las que no están asignadas a un mazo armado."
+        ),
+        "inventory.filters.only_free": "Solo cartas con copias libres",
         "inventory.filters.type": "Tipo",
         "inventory.filters.type_hint": (
-            "Busca un tipo y pulsa Añadir. Quita desde la lista de abajo. "
-            "La coincidencia es OR."
+            "Marca uno o más tipos; se queda la carta que cumpla cualquiera (OR)."
         ),
-        "inventory.filters.type_search": "Buscar un tipo…",
-        "inventory.filters.type_selected": "Tipos seleccionados",
-        "inventory.filters.type_add": "Añadir",
-        "inventory.filters.type_remove": "Quitar",
+        "inventory.filters.subtypes": "Subtipo",
+        "inventory.filters.subtypes_hint": (
+            "Lo que va después del guion largo de la línea de tipo: Elf, Equipment, "
+            "Aura… Solo se ofrecen los subtipos presentes en tu colección. "
+            "Cualquiera de ellos coincide (OR) y acotan a los tipos marcados."
+        ),
+        "inventory.filters.subtypes_search": "Buscar un subtipo (Elf, Aura…)",
+        "inventory.filters.subtypes_selected": "Subtipos seleccionados",
+        "inventory.filters.subtypes_add": "Añadir",
+        "inventory.filters.subtypes_remove": "Quitar",
         "inventory.filters.decks": "Mazos armados",
         "inventory.filters.decks_hint": (
             "Oculta cartas con una copia física asignada a mazos armados. "

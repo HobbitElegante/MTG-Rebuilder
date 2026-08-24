@@ -1,4 +1,4 @@
-"""Tests for inventory panel filters (type / id<= colors / rarity / CMC / decks)."""
+"""Tests for inventory panel filters (type / subtype / colors / rarity / CMC / decks)."""
 
 from mtg_rebuilder.algorithms.inventory_filters import (
     CmcCondition,
@@ -7,7 +7,10 @@ from mtg_rebuilder.algorithms.inventory_filters import (
     matches_color_identity_at_most,
     matches_panel_filters,
     matches_rarity,
+    matches_subtypes,
     matches_type_line,
+    subtype_catalog,
+    subtypes_of,
 )
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
 
@@ -70,6 +73,68 @@ def test_type_match_is_or_across_selected() -> None:
     assert matches_type_line("Legendary Creature — Human", frozenset({"Legendary"}))
     assert matches_type_line("Artifact Creature — Construct", frozenset({"Instant", "Artifact"}))
     assert not matches_type_line("Instant", frozenset({"Creature", "Sorcery"}))
+
+
+def test_subtypes_are_read_past_the_dash_on_every_face() -> None:
+    assert subtypes_of("Creature — Elf Druid") == frozenset({"Elf", "Druid"})
+    assert subtypes_of("Legendary Artifact — Equipment") == frozenset({"Equipment"})
+    assert subtypes_of("Instant") == frozenset()
+    assert subtypes_of(None) == frozenset()
+    assert subtypes_of("Creature — Human Wizard // Instant") == frozenset(
+        {"Human", "Wizard"}
+    )
+
+
+def test_subtype_catalog_is_sorted_and_deduplicated() -> None:
+    lines = [
+        "Creature — Elf Druid",
+        "Creature — elf Warrior",
+        "Instant",
+        None,
+        "Artifact — Equipment",
+    ]
+    assert subtype_catalog(lines) == ("Druid", "Elf", "Equipment", "Warrior")
+
+
+def test_subtype_match_is_or_and_case_insensitive() -> None:
+    assert matches_subtypes("Creature — Elf Druid", frozenset({"Elf"}))
+    assert matches_subtypes("Creature — Elf Druid", frozenset({"elf"}))
+    assert matches_subtypes("Creature — Elf Druid", frozenset({"Goblin", "Druid"}))
+    assert not matches_subtypes("Creature — Elf Druid", frozenset({"Goblin"}))
+    assert not matches_subtypes("Instant", frozenset({"Elf"}))
+    assert matches_subtypes("Instant", frozenset())
+
+
+def test_types_and_subtypes_narrow_each_other() -> None:
+    elf_creature = _row(
+        name="Llanowar Elves", oracle_id="llanowar", type_line="Creature — Elf Druid"
+    )
+    elf_land = _row(
+        name="Elf Land", oracle_id="elfland", type_line="Land — Elf"
+    )
+    goblin = _row(
+        name="Goblin Guide", oracle_id="guide", type_line="Creature — Goblin Scout"
+    )
+    state = InventoryFilterState(
+        types=frozenset({"Creature"}), subtypes=frozenset({"Elf"})
+    )
+    assert matches_panel_filters(elf_creature, state)
+    assert not matches_panel_filters(elf_land, state)
+    assert not matches_panel_filters(goblin, state)
+
+
+def test_only_with_free_hides_fully_assigned_cards() -> None:
+    free = _row(free_copies=1)
+    spent = _row(name="Sol Ring", oracle_id="sol", free_copies=0)
+    state = InventoryFilterState(only_with_free=True)
+    assert matches_panel_filters(free, state)
+    assert not matches_panel_filters(spent, state)
+    assert state.is_active
+    assert not InventoryFilterState().is_active
+
+
+def test_subtypes_alone_activate_the_filter() -> None:
+    assert InventoryFilterState(subtypes=frozenset({"Elf"})).is_active
 
 
 def test_cmc_multiple_conditions_and() -> None:
