@@ -108,7 +108,7 @@ In development, the SQLite database is created at `data/mtg_rebuilder.db` (gitig
 uv run pytest
 ```
 
-384 tests passing locally (includes path-migration cases after rename). The Inventory widget tests (image grid, filter dialog, chip bar) need Qt: they run locally (`QT_QPA_PLATFORM=offscreen`) and skip automatically on the headless CI runner.
+399 tests passing locally (includes path-migration cases after rename). Widget tests (image grid, filter dialog, chip bar, mana icons) need Qt: they run locally (`QT_QPA_PLATFORM=offscreen`) and skip automatically on the headless CI runner.
 
 ## First-time setup
 
@@ -150,7 +150,7 @@ Tip: **Edit list** can grow or shrink the list (add forgotten lands, change quan
 ## Inventory
 
 1. Open the **Inventory** tab.
-2. Table columns: **Name** · **CMC** · **Colors** · **Rarity** · **Total** · **Free** · **Assigned** · **In decks** (deck names only, or — if fully free). With edition tracking on, an **Edition** column appears. CMC is the numeric mana value (e.g. GGG → 3; hover the header for the full label). Colors show WUBRG identity (— if colorless). Name is the wide column.
+2. Table columns: **Name** · **CMC** · **Mana** · **Colors** · **Rarity** · **Total** · **Free** · **Assigned** · **In decks** (deck names only, or — if fully free). With edition tracking on, an **Edition** column appears. CMC is the numeric mana value (e.g. GGG → 3; hover the header for the full label). **Mana** is the printed cost as Scryfall symbols (hover a cell for the text; lands show —). Colors show WUBRG identity (— if colorless). Name is the wide column.
 3. Click a column header to sort (text A–Z / Z–A; numbers high→low first, then reverse). Hover **In decks** for the full list when a card is in several decks.
 4. Use the search bar to filter by card name. **Filter** opens a dialog for: only cards with free copies, type (checkboxes), **subtype** (search and add — the picker lists the subtypes present in your collection, and they narrow the checked types), hide cards in armed decks (all or specific), color identity, rarity (C/U/R/M), and mana-value comparisons. Each section title carries an ⓘ with its help text, and the form scrolls instead of growing past the screen. The pickers disable **Add** and say why when what you typed matches nothing, matches several options, or is already on the list.
 5. Color identity has a **match mode**: *at most* these colors (Scryfall `id≤`), *exactly* them, or *at least* them. No letters checked means no color filter, so cards with no color at all have their own **Only colorless cards** switch, which overrides the letters.
