@@ -6,12 +6,12 @@ Desktop application to manage a physical Magic: The Gathering Commander collecti
 
 **MTG-Rebuilder** (repo / package / binaries). The window title remains *MTG Commander Collection Manager*.
 
-Prebuilt **Downloads** below track **`v1.1.1`** once that tag is published (Inventory Image view: no more empty blocks after resizing, keyboard navigation, clearer loading tiles). Until then, `/releases/latest` still shows **v1.1.0**.
+Prebuilt **Downloads** below track **`v1.2.0`** once that tag is published (Inventory filter chips and color modes, CMC guards, Scryfall mana symbols, Qt window icon). Until then, `/releases/latest` still shows **v1.1.1**.
 
 ### Collection
 
 - Physical inventory in SQLite, grouped by card: total / free / assigned
-- Inventory table: Name · CMC · Colors (WUBRG) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
+- Inventory table: Name · CMC · Colors (WUBRG as Scryfall mana symbols) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
 - Search by card name; **Filter** dialog for free copies, type, **subtype (Elf, Aura…)**, armed-deck exclusion, color identity (**at most / exactly / at least**, plus **colorless only**), **rarity (C/U/R/M)**, and mana value
 - The Filter button counts what is on (`Filter (3)`) and every active filter shows up as a **chip** above the table, so you can drop one without reopening the dialog
 - **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; arrow-key navigation (Right continues on the next row) plus Home/End; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview
@@ -202,18 +202,18 @@ alembic.ini       # Dev CLI for new revisions (`alembic -c alembic.ini …`)
 
 **Changing the schema:** add a revision with `alembic -c alembic.ini revision --autogenerate -m "…"`, review it under `database/alembic/versions/`, then launch the app (migrations run on startup).
 
-## Latest (v1.1.1)
+## Latest (v1.2.0)
 
-**v1.1.1** fixes the Inventory **Image view** and makes it keyboard-friendly.
+**v1.2.0** polishes Inventory filters and adds Scryfall mana symbols in the UI.
 
-- **Empty blocks fixed:** tiles created while the grid was already on screen stayed hidden (Qt shows children of a visible parent only after `show()`), so resizing the window left whole bands blank until you scrolled
-- **Keyboard navigation:** arrow keys move card by card (Right past the end of a row continues on the leftmost card below), Home/End jump to the first/last card, Enter refreshes the preview
-- **Clearer tiles while loading:** a card without local art keeps the card frame and name and says the image is still loading, instead of showing an empty slot
-- Smoother scrolling (only tiles entering or leaving the viewport are remounted) and a larger overscan so fast scrolling has fewer gaps
-- Switching table → Image view with nothing selected, or after filtering to a shorter list, no longer leaves the grid blank
+- **Filter chips + counter:** the Filter button shows how many are on (`Filter (3)`); each active filter is a chip above the table (✕ to drop one, or Clear all)
+- **Color identity modes:** at most / exactly / at least, plus **Only colorless cards** (overrides the letter checkboxes)
+- **CMC guards:** Add blocks duplicate or impossible comparisons; a hint appears if edited rows leave the set empty
+- **Picker feedback:** subtype/deck/CMC search disables Add and explains why (no match, ambiguous, already listed)
+- **Scryfall mana symbols (tier B):** bundled SVGs for WUBRGC, 0–15, and X — Colors column, filter checkboxes, card details, and deck-stat pips (credit under Browse → Scryfall)
+- Compact filter dialog (ⓘ tooltips, type checkboxes, subtype picker, only-with-free) and Qt **window icon** for `uv run` / Windows exe
+- **v1.1.1:** Inventory Image view empty-block fix, keyboard navigation, loading placeholders
 - **v1.1.0:** free-size **Edit list**; per-deck **format tag**; Decks **Format** filter; **Update list** → qty/Free dialog
 - **v1.0.0:** first stable **MTG-Rebuilder** rename; Inventory **Image view**; Linux `.desktop` install; Optimize **Viable plans**; ASCII **MTG-R**
-- **v0.9.6:** Default theme dark; Availability name-only placeholder; Filter tooltips localized
-- **v0.9.5:** Inventory rarity column/filter; Windows-safe combos; Issue templates
 
-**Next:** commit/tag app icon · editions v2 · real rules for non-Commander formats · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference).
+**Next:** editions v2 · real rules for non-Commander formats · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference) · Windows `.exe` file icon.
