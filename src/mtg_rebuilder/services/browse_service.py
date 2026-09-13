@@ -49,6 +49,8 @@ class InventorySummaryRow:
     type_line: str | None = None
     colors: str | None = None
     cmc: float | None = None
+    # Scryfall brace string (``{2}{W/U}``); empty for lands, None when unknown.
+    mana_cost: str | None = None
     # Representative Scryfall rarity (bulk / lookup).
     rarity: str | None = None
     # Effective rarities for filtering: Card.rarity and/or per-edition CardPrint
@@ -156,6 +158,7 @@ class BrowseService:
             type_line,
             colors,
             cmc,
+            mana_cost,
             rarity,
             oracle_text,
             commander_legality,
@@ -177,6 +180,7 @@ class BrowseService:
                     type_line=type_line,
                     colors=colors,
                     cmc=cmc,
+                    mana_cost=mana_cost,
                     rarity=rarity,
                     rarities=_effective_rarities(
                         rarity,

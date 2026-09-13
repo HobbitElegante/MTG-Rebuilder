@@ -10,6 +10,9 @@ block_cipher = None
 ROOT = Path(SPECPATH).resolve().parent
 ALEMBIC_DIR = ROOT / "src" / "mtg_rebuilder" / "database" / "alembic"
 RESOURCES_DIR = ROOT / "src" / "mtg_rebuilder" / "resources"
+# File icon for MTG-Rebuilder.exe (scripts/make_windows_icon.py regenerates it
+# from resources/app_icon.png). PyInstaller ignores it with a warning on Linux.
+WINDOWS_ICON = ROOT / "packaging" / "mtg_rebuilder.ico"
 
 datas = [
     (str(ALEMBIC_DIR), "mtg_rebuilder/database/alembic"),
@@ -68,6 +71,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(WINDOWS_ICON),
 )
 
 coll = COLLECT(

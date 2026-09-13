@@ -204,6 +204,7 @@ def test_format_inventory_detail_lines_without_edition() -> None:
         assigned_decks=("Kellan",),
         color_identity="",
         cmc=1.0,
+        mana_cost="{1}",
         rarity="uncommon",
         rarities=frozenset({"uncommon"}),
         editions=(("C21", 2), (None, 1)),
@@ -212,6 +213,7 @@ def test_format_inventory_detail_lines_without_edition() -> None:
     assert "Edition" not in lines
     assert lines["Name"] == "Sol Ring"
     assert lines["CMC"] == "1"
+    assert lines["Mana"] == "1"
     assert lines["Colors"] == "—"
     assert lines["Rarity"] == "U"
     assert lines["Total"] == "3"

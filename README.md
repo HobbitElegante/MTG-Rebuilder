@@ -6,12 +6,12 @@ Desktop application to manage a physical Magic: The Gathering Commander collecti
 
 **MTG-Rebuilder** (repo / package / binaries). The window title remains *MTG Commander Collection Manager*.
 
-Prebuilt **Downloads** below track **`v1.2.0`** once that tag is published (Inventory filter chips and color modes, CMC guards, Scryfall mana symbols, Qt window icon). Until then, `/releases/latest` still shows **v1.1.1**.
+Prebuilt **Downloads** below track **`v1.2.1`** once that tag is published (Inventory mana-cost column, hybrid and Phyrexian mana symbols, Windows `.exe` file icon, faster Viable plans). Until then, `/releases/latest` shows the previous tag.
 
 ### Collection
 
 - Physical inventory in SQLite, grouped by card: total / free / assigned
-- Inventory table: Name · CMC · Colors (WUBRG as Scryfall mana symbols) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
+- Inventory table: Name · CMC · **Mana** (printed cost as Scryfall symbols) · Colors (WUBRG as Scryfall mana symbols) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
 - Search by card name; **Filter** dialog for free copies, type, **subtype (Elf, Aura…)**, armed-deck exclusion, color identity (**at most / exactly / at least**, plus **colorless only**), **rarity (C/U/R/M)**, and mana value
 - The Filter button counts what is on (`Filter (3)`) and every active filter shows up as a **chip** above the table, so you can drop one without reopening the dialog
 - **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; arrow-key navigation (Right continues on the next row) plus Home/End; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview
@@ -195,25 +195,24 @@ src/mtg_rebuilder/
   ui/             # PySide6 desktop UI (+ deck_list_display, inventory_display, inventory_image_layout, card_preview, inventory_image_grid, …)
 tests/
   fixtures/       # Sample exports (kellan, arena, archidekt, mtgo .dek)
-scripts/          # build_linux.sh, build_windows.ps1, install_linux_desktop.sh
-packaging/        # PyInstaller spec, AppImage .desktop + icon
+scripts/          # build_linux.sh, build_windows.ps1, install_linux_desktop.sh, make_windows_icon.py
+packaging/        # PyInstaller spec, AppImage .desktop + icon, Windows .ico
 alembic.ini       # Dev CLI for new revisions (`alembic -c alembic.ini …`)
 ```
 
 **Changing the schema:** add a revision with `alembic -c alembic.ini revision --autogenerate -m "…"`, review it under `database/alembic/versions/`, then launch the app (migrations run on startup).
 
-## Latest (v1.2.0)
+## Latest (v1.2.1)
 
-**v1.2.0** polishes Inventory filters and adds Scryfall mana symbols in the UI.
+**v1.2.1** shows printed mana costs in Inventory, completes the mana-symbol set, and stamps the Windows executable with the app icon.
 
-- **Filter chips + counter:** the Filter button shows how many are on (`Filter (3)`); each active filter is a chip above the table (✕ to drop one, or Clear all)
-- **Color identity modes:** at most / exactly / at least, plus **Only colorless cards** (overrides the letter checkboxes)
-- **CMC guards:** Add blocks duplicate or impossible comparisons; a hint appears if edited rows leave the set empty
-- **Picker feedback:** subtype/deck/CMC search disables Add and explains why (no match, ambiguous, already listed)
-- **Scryfall mana symbols (tier B):** bundled SVGs for WUBRGC, 0–15, and X — Colors column, filter checkboxes, card details, and deck-stat pips (credit under Browse → Scryfall)
-- Compact filter dialog (ⓘ tooltips, type checkboxes, subtype picker, only-with-free) and Qt **window icon** for `uv run` / Windows exe
+- **Mana column:** the printed cost of each card, rendered as Scryfall symbols, next to CMC in the Inventory table and in the field list under the preview (sortable; tooltip spells the cost out)
+- **Full symbol set:** hybrids (`{W/U}`, `{2/W}`, `{C/W}`), Phyrexian (`{W/P}`, `{W/U/P}`), snow and generic up to 20 — every printed cost renders instead of falling back to text
+- **Windows `.exe` file icon:** the executable now carries the app icon (16–256 px), not the generic PyInstaller one
+- **Viable plans, much faster:** the enumeration prunes unviable branches, so *Largest number* went from ~60 s to ~0.1 s on a 28-deck collection
+- **v1.2.0:** Inventory filter chips + counter; color identity modes (at most / exactly / at least) and colorless-only; CMC guards; picker feedback; Scryfall mana symbols; Qt window icon
 - **v1.1.1:** Inventory Image view empty-block fix, keyboard navigation, loading placeholders
 - **v1.1.0:** free-size **Edit list**; per-deck **format tag**; Decks **Format** filter; **Update list** → qty/Free dialog
 - **v1.0.0:** first stable **MTG-Rebuilder** rename; Inventory **Image view**; Linux `.desktop` install; Optimize **Viable plans**; ASCII **MTG-R**
 
-**Next:** editions v2 · real rules for non-Commander formats · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference) · Windows `.exe` file icon.
+**Next:** editions v2 · real rules for non-Commander formats · optional Scryfall inventory search · Optimize advanced (priorities / cards moved / plan stats / print preference).

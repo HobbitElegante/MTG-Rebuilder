@@ -52,11 +52,13 @@ from mtg_rebuilder.ui.inventory_display import (
     format_filter_button_label,
     format_filter_chips,
     format_inventory_decks,
+    format_mana_cost,
     format_mana_value,
     format_rarity_summary,
+    mana_cost_sort_key,
     rarity_sort_rank,
 )
-from mtg_rebuilder.ui.mana_icons import color_identity_pixmap
+from mtg_rebuilder.ui.mana_icons import color_identity_pixmap, mana_cost_pixmap
 from mtg_rebuilder.ui.scryfall_icon import scryfall_icon
 from mtg_rebuilder.ui.widgets.card_preview import (
     CardPreviewPanel,
@@ -77,15 +79,22 @@ SEARCH_DEBOUNCE_MS = 350
 # Filter dialog covers type / id≤ / CMC. Flip to True to re-enable the UI.
 SCRYFALL_INVENTORY_SEARCH_ENABLED = False
 
+MANA_SYMBOL_SIZE = 14
+# Eight symbols side-by-side covers every printed cost we care about; the strip
+# for anything longer is scaled down by QIcon instead of clipped.
+MANA_COST_ICON_WIDTH = MANA_SYMBOL_SIZE * 8 + 7
+
 COL_NAME = 0
 COL_CMC = 1
-COL_COLOR = 2
-COL_RARITY = 3
-COL_EDITION = 4
-COL_TOTAL = 5
-COL_FREE = 6
-COL_ASSIGNED = 7
-COL_DECKS = 8
+COL_MANA_COST = 2
+COL_COLOR = 3
+COL_RARITY = 4
+COL_EDITION = 5
+COL_TOTAL = 6
+COL_FREE = 7
+COL_ASSIGNED = 8
+COL_DECKS = 9
+COLUMN_COUNT = 10
 
 
 class InventorySearchWorker(QThread):
@@ -414,6 +423,7 @@ class InventoryWidget(QWidget):
         return [
             self._translator.t("browse.cards.name"),
             self._translator.t("inventory.table.cmc"),
+            self._translator.t("inventory.table.mana_cost"),
             self._translator.t("inventory.table.color"),
             self._translator.t("inventory.table.rarity"),
             self._translator.t("inventory.table.edition"),
@@ -427,6 +437,9 @@ class InventoryWidget(QWidget):
         header = self._table.horizontalHeaderItem(COL_CMC)
         if header is not None:
             header.setToolTip(self._translator.t("inventory.table.cmc_tip"))
+        mana = self._table.horizontalHeaderItem(COL_MANA_COST)
+        if mana is not None:
+            mana.setToolTip(self._translator.t("inventory.table.mana_cost_tip"))
         rarity = self._table.horizontalHeaderItem(COL_RARITY)
         if rarity is not None:
             rarity.setToolTip(self._translator.t("inventory.table.rarity_tip"))
@@ -523,11 +536,13 @@ class InventoryWidget(QWidget):
         self._filter_chips.setVisible(False)
         collection.addWidget(self._filter_chips)
 
-        self._table = QTableWidget(0, 9)
+        self._table = QTableWidget(0, COLUMN_COUNT)
         self._table.setHorizontalHeaderLabels(self._header_labels())
         self._apply_header_tooltips()
-        # Wide enough for five WUBRG pips side-by-side in the Colors column.
-        self._table.setIconSize(QSize(74, 14))
+        # Ceiling for the symbol strips: eight cost symbols in Mana (longer
+        # costs shrink to fit), five WUBRG pips in Colors. Smaller strips are
+        # drawn at their own size — QIcon never scales a pixmap up.
+        self._table.setIconSize(QSize(MANA_COST_ICON_WIDTH, 14))
         self._table.setColumnHidden(COL_EDITION, not self._track_editions)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = self._table.horizontalHeader()
@@ -536,6 +551,7 @@ class InventoryWidget(QWidget):
         # rebuild and freezes the UI with ~1.5k inventory rows when visible.
         header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_CMC, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(COL_MANA_COST, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(COL_COLOR, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(COL_RARITY, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(COL_EDITION, QHeaderView.ResizeMode.Interactive)
@@ -545,6 +561,7 @@ class InventoryWidget(QWidget):
         header.setSectionResizeMode(COL_DECKS, QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(60)
         header.resizeSection(COL_CMC, 56)
+        header.resizeSection(COL_MANA_COST, MANA_COST_ICON_WIDTH + 14)
         header.resizeSection(COL_COLOR, 88)
         header.resizeSection(COL_RARITY, 56)
         header.resizeSection(COL_EDITION, 110)
@@ -695,6 +712,7 @@ class InventoryWidget(QWidget):
         options: list[tuple[int, str]] = [
             (COL_NAME, labels[COL_NAME]),
             (COL_CMC, labels[COL_CMC]),
+            (COL_MANA_COST, labels[COL_MANA_COST]),
             (COL_COLOR, labels[COL_COLOR]),
             (COL_RARITY, labels[COL_RARITY]),
         ]
@@ -766,6 +784,8 @@ class InventoryWidget(QWidget):
             return row.card_name.casefold()
         if self._sort_column == COL_CMC:
             return -1.0 if row.cmc is None else float(row.cmc)
+        if self._sort_column == COL_MANA_COST:
+            return mana_cost_sort_key(row)
         if self._sort_column == COL_COLOR:
             return (row.color_identity or "").casefold()
         if self._sort_column == COL_RARITY:
@@ -1136,10 +1156,23 @@ class InventoryWidget(QWidget):
                 cmc_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 cmc_item.setFlags(cmc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
+                mana_text = format_mana_cost(row.mana_cost, self._translator)
+                mana_pix = mana_cost_pixmap(row.mana_cost, size=MANA_SYMBOL_SIZE)
+                if mana_pix is not None:
+                    mana_item = QTableWidgetItem()
+                    mana_item.setIcon(QIcon(mana_pix))
+                    mana_item.setToolTip(mana_text)
+                else:
+                    mana_item = QTableWidgetItem(mana_text)
+                mana_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                mana_item.setFlags(mana_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
                 color_text = format_color_identity(
                     row.color_identity, self._translator
                 )
-                color_pix = color_identity_pixmap(row.color_identity, size=14)
+                color_pix = color_identity_pixmap(
+                    row.color_identity, size=MANA_SYMBOL_SIZE
+                )
                 if color_pix is not None:
                     color_item = QTableWidgetItem()
                     color_item.setIcon(QIcon(color_pix))
@@ -1190,6 +1223,7 @@ class InventoryWidget(QWidget):
 
                 table.setItem(index, COL_NAME, name_item)
                 table.setItem(index, COL_CMC, cmc_item)
+                table.setItem(index, COL_MANA_COST, mana_item)
                 table.setItem(index, COL_COLOR, color_item)
                 table.setItem(index, COL_RARITY, rarity_item)
                 table.setItem(index, COL_EDITION, edition_item)

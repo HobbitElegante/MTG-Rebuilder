@@ -8,10 +8,12 @@ copies assigned to locked (ɸ) decks so they cannot cover other decks.
 from __future__ import annotations
 
 from collections.abc import Callable
-from itertools import combinations
 
 # Soft cap for UI listing — beyond this, return early (truncated=True).
 DEFAULT_LIST_LIMIT = 500
+
+# Nodes of the search tree between two ``should_stop`` polls.
+STOP_CHECK_INTERVAL = 2048
 
 
 def sum_requirements(
@@ -124,32 +126,7 @@ def is_combination_viable_respecting_locks(
     return True
 
 
-def _combo_viable(
-    combo: tuple[int, ...],
-    requirements_by_deck: dict[int, dict[str, int]],
-    stock: dict[str, int],
-    *,
-    respect_locks: bool,
-    locked_ids: set[int],
-    locked_assigned_by_deck: dict[int, dict[str, int]],
-    pool: dict[str, int] | None = None,
-    pool_demand_by_deck: dict[int, dict[str, int]] | None = None,
-) -> bool:
-    if respect_locks and locked_ids:
-        return is_combination_viable_respecting_locks(
-            combo,
-            requirements_by_deck,
-            stock,
-            locked_ids,
-            locked_assigned_by_deck,
-            pool=pool,
-            pool_demand_by_deck=pool_demand_by_deck,
-        )
-    demand = sum_requirements(combo, requirements_by_deck)
-    return is_combination_viable(demand, stock)
-
-
-def _prepare_lock_context(
+def _capacity_and_demands(
     deck_ids: list[int],
     requirements_by_deck: dict[int, dict[str, int]],
     stock: dict[str, int],
@@ -157,18 +134,95 @@ def _prepare_lock_context(
     respect_locks: bool,
     locked_ids: set[int],
     locked_assigned_by_deck: dict[int, dict[str, int]],
-) -> tuple[dict[str, int] | None, dict[int, dict[str, int]] | None]:
-    if not (respect_locks and locked_ids):
-        return None, None
-    assigned_all = _assigned_all_locked(locked_ids, locked_assigned_by_deck)
-    pool = _pool_after_locks(stock, assigned_all)
-    pool_demand = {
-        deck_id: _deck_pool_demand(
-            deck_id, requirements_by_deck, locked_ids, locked_assigned_by_deck
+) -> tuple[dict[str, int], list[list[tuple[str, int]]]]:
+    """Capacity per card plus what each deck draws from it, in ``deck_ids`` order.
+
+    Both modes reduce to the same test — a set of decks fits when its summed
+    demand stays within capacity — so the search itself never needs to know
+    whether locks are being respected.
+    """
+    if respect_locks and locked_ids:
+        capacity = _pool_after_locks(
+            stock, _assigned_all_locked(locked_ids, locked_assigned_by_deck)
         )
-        for deck_id in deck_ids
-    }
-    return pool, pool_demand
+        per_deck = [
+            _deck_pool_demand(
+                deck_id, requirements_by_deck, locked_ids, locked_assigned_by_deck
+            )
+            for deck_id in deck_ids
+        ]
+    else:
+        capacity = stock
+        per_deck = [requirements_by_deck.get(deck_id, {}) for deck_id in deck_ids]
+    demands = [
+        [(card_id, qty) for card_id, qty in demand.items() if qty > 0]
+        for demand in per_deck
+    ]
+    return capacity, demands
+
+
+def _search_combinations(
+    ordered: list[int],
+    demands: list[list[tuple[str, int]]],
+    capacity: dict[str, int],
+    *,
+    n: int,
+    limit: int | None,
+    should_stop: Callable[[], bool] | None,
+) -> tuple[list[tuple[int, ...]], bool]:
+    """Depth-first walk over size-``n`` combinations, skipping dead branches.
+
+    Demand accumulates as decks are picked, so a prefix that already exceeds
+    capacity for one card prunes every combination extending it instead of
+    re-summing each one. Results come out in the same order as
+    ``itertools.combinations`` over ``ordered``.
+    """
+    total = len(ordered)
+    found: list[tuple[int, ...]] = []
+    used: dict[str, int] = {}
+    picked: list[int] = []
+    stopped = False
+    polls_left = 0
+
+    def walk(start: int, remaining: int) -> bool:
+        """Pick one more deck; True means enumeration is over (limit or stop)."""
+        nonlocal stopped, polls_left
+        if remaining == 0:
+            found.append(tuple(picked))
+            return limit is not None and len(found) >= limit
+        # Stop early enough to still fit the decks left to pick.
+        for index in range(start, total - remaining + 1):
+            if should_stop is not None:
+                if polls_left <= 0:
+                    if should_stop():
+                        stopped = True
+                        return True
+                    polls_left = STOP_CHECK_INTERVAL
+                polls_left -= 1
+
+            demand = demands[index]
+            added = 0
+            for card_id, qty in demand:
+                running = used.get(card_id, 0) + qty
+                if running > capacity.get(card_id, 0):
+                    break
+                used[card_id] = running
+                added += 1
+
+            done = False
+            if added == len(demand):
+                picked.append(ordered[index])
+                done = walk(index + 1, remaining - 1)
+                picked.pop()
+            for position in range(added):
+                card_id, qty = demand[position]
+                used[card_id] -= qty
+            if done:
+                return True
+        return False
+
+    walk(0, n)
+    return found, stopped or (limit is not None and len(found) >= limit)
 
 
 def enumerate_viable_combinations(
@@ -191,37 +245,22 @@ def enumerate_viable_combinations(
     if n < 1 or n > len(deck_ids):
         return [], False
     ordered = sorted(deck_ids)
-    locks = locked_ids or set()
-    assigned = locked_assigned_by_deck or {}
-    pool, pool_demand = _prepare_lock_context(
+    capacity, demands = _capacity_and_demands(
         ordered,
         requirements_by_deck,
         stock,
         respect_locks=respect_locks,
-        locked_ids=locks,
-        locked_assigned_by_deck=assigned,
+        locked_ids=locked_ids or set(),
+        locked_assigned_by_deck=locked_assigned_by_deck or {},
     )
-    viable: list[tuple[int, ...]] = []
-    truncated = False
-    for combo in combinations(ordered, n):
-        if should_stop is not None and should_stop():
-            truncated = True
-            break
-        if _combo_viable(
-            combo,
-            requirements_by_deck,
-            stock,
-            respect_locks=respect_locks,
-            locked_ids=locks,
-            locked_assigned_by_deck=assigned,
-            pool=pool,
-            pool_demand_by_deck=pool_demand,
-        ):
-            viable.append(combo)
-            if limit is not None and len(viable) >= limit:
-                truncated = True
-                break
-    return viable, truncated
+    return _search_combinations(
+        ordered,
+        demands,
+        capacity,
+        n=n,
+        limit=limit,
+        should_stop=should_stop,
+    )
 
 
 def any_viable_combination(
@@ -235,32 +274,17 @@ def any_viable_combination(
     locked_assigned_by_deck: dict[int, dict[str, int]] | None = None,
 ) -> bool:
     """True if at least one size-``n`` combination fits (short-circuit)."""
-    if n < 1 or n > len(deck_ids):
-        return False
-    ordered = sorted(deck_ids)
-    locks = locked_ids or set()
-    assigned = locked_assigned_by_deck or {}
-    pool, pool_demand = _prepare_lock_context(
-        ordered,
+    combos, _ = enumerate_viable_combinations(
+        deck_ids,
         requirements_by_deck,
         stock,
+        n=n,
         respect_locks=respect_locks,
-        locked_ids=locks,
-        locked_assigned_by_deck=assigned,
+        locked_ids=locked_ids,
+        locked_assigned_by_deck=locked_assigned_by_deck,
+        limit=1,
     )
-    for combo in combinations(ordered, n):
-        if _combo_viable(
-            combo,
-            requirements_by_deck,
-            stock,
-            respect_locks=respect_locks,
-            locked_ids=locks,
-            locked_assigned_by_deck=assigned,
-            pool=pool,
-            pool_demand_by_deck=pool_demand,
-        ):
-            return True
-    return False
+    return bool(combos)
 
 
 def solve_max_viable_size(

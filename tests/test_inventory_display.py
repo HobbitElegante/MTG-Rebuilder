@@ -13,7 +13,9 @@ from mtg_rebuilder.ui.inventory_display import (
     format_filter_chip_label,
     format_filter_chips,
     format_inventory_decks,
+    format_mana_cost,
     format_rarity_summary,
+    mana_cost_sort_key,
     rarity_sort_rank,
 )
 
@@ -26,6 +28,8 @@ def _row(
     color_identity: str | None = None,
     rarity: str | None = None,
     rarities: frozenset[str] = frozenset(),
+    cmc: float | None = None,
+    mana_cost: str | None = None,
 ) -> InventorySummaryRow:
     return InventorySummaryRow(
         oracle_id="oid",
@@ -36,6 +40,8 @@ def _row(
         color_identity=color_identity,
         rarity=rarity,
         rarities=rarities or (frozenset({rarity}) if rarity else frozenset()),
+        cmc=cmc,
+        mana_cost=mana_cost,
     )
 
 
@@ -137,6 +143,26 @@ def test_format_color_identity_empty() -> None:
     translator = Translator("en")
     assert format_color_identity(None, translator) == "—"
     assert format_color_identity("", translator) == "—"
+
+
+def test_format_mana_cost_drops_braces() -> None:
+    translator = Translator("en")
+    assert format_mana_cost("{2}{W/U}{R}", translator) == "2 W/U R"
+    assert format_mana_cost("{u/w}", translator) == "W/U"
+    # Lands print no cost, and unsynced cards have none yet.
+    assert format_mana_cost("", translator) == "—"
+    assert format_mana_cost(None, translator) == "—"
+
+
+def test_mana_cost_sort_key_orders_by_value_then_cost() -> None:
+    cheap = _row(cmc=1, mana_cost="{W}")
+    mid_w = _row(cmc=2, mana_cost="{1}{W}")
+    mid_u = _row(cmc=2, mana_cost="{1}{U}")
+    land = _row(cmc=0, mana_cost="")
+    assert mana_cost_sort_key(land) < mana_cost_sort_key(cheap)
+    assert mana_cost_sort_key(cheap) < mana_cost_sort_key(mid_u)
+    # Same mana value: the printed cost breaks the tie, so colors group.
+    assert mana_cost_sort_key(mid_u) < mana_cost_sort_key(mid_w)
 
 
 def test_format_rarity_summary_letters() -> None:

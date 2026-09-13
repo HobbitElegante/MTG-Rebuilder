@@ -1,13 +1,76 @@
 """Pure tests for viable simultaneous deck sets."""
 
+from itertools import combinations
+from random import Random
+
 from mtg_rebuilder.algorithms.viable_plans import (
+    any_viable_combination,
     enumerate_max_viable_combinations,
     enumerate_viable_combinations,
     find_max_viable_size,
+    find_max_viable_size_scan,
     is_combination_viable,
     is_combination_viable_respecting_locks,
     sum_requirements,
 )
+
+
+def _sample_collection(
+    seed: int,
+    deck_count: int = 12,
+    card_count: int = 30,
+) -> tuple[
+    list[int],
+    dict[int, dict[str, int]],
+    dict[str, int],
+    set[int],
+    dict[int, dict[str, int]],
+]:
+    """Deterministic pseudo-collection: overlapping lists over a scarce stock."""
+    rng = Random(seed)
+    cards = [f"c{i}" for i in range(card_count)]
+    deck_ids = list(range(1, deck_count + 1))
+    requirements = {
+        deck_id: {
+            card: rng.randint(1, 2)
+            for card in rng.sample(cards, rng.randint(3, 8))
+        }
+        for deck_id in deck_ids
+    }
+    stock = {card: rng.randint(0, 3) for card in cards}
+    locked_ids = {deck_id for deck_id in deck_ids if deck_id % 4 == 0}
+    locked_assigned = {
+        deck_id: {
+            card: min(qty, rng.randint(0, qty))
+            for card, qty in requirements[deck_id].items()
+        }
+        for deck_id in locked_ids
+    }
+    return deck_ids, requirements, stock, locked_ids, locked_assigned
+
+
+def _brute_force(
+    deck_ids: list[int],
+    requirements: dict[int, dict[str, int]],
+    stock: dict[str, int],
+    n: int,
+    *,
+    respect_locks: bool = False,
+    locked_ids: set[int] | None = None,
+    locked_assigned: dict[int, dict[str, int]] | None = None,
+) -> list[tuple[int, ...]]:
+    """Reference enumeration: test every combination with the public predicates."""
+    viable = []
+    for combo in combinations(sorted(deck_ids), n):
+        if respect_locks:
+            ok = is_combination_viable_respecting_locks(
+                combo, requirements, stock, locked_ids or set(), locked_assigned or {}
+            )
+        else:
+            ok = is_combination_viable(sum_requirements(combo, requirements), stock)
+        if ok:
+            viable.append(combo)
+    return viable
 
 
 def test_sum_requirements() -> None:
@@ -155,3 +218,83 @@ def test_enumerate_with_respect_locks() -> None:
         locked_assigned_by_deck=locked_assigned,
     )
     assert hybrid == [(2, 9)]
+
+
+def test_pruned_search_matches_brute_force() -> None:
+    """Skipping dead branches must not change which combinations come out.
+
+    The search prunes prefixes that already exceed stock; this checks it against
+    testing every combination one by one, in order, for every size and both modes.
+    """
+    for seed in (1, 7, 42):
+        deck_ids, requirements, stock, locked_ids, locked_assigned = (
+            _sample_collection(seed)
+        )
+        for n in range(1, len(deck_ids) + 1):
+            combos, truncated = enumerate_viable_combinations(
+                deck_ids, requirements, stock, n=n, limit=None
+            )
+            assert not truncated
+            assert combos == _brute_force(deck_ids, requirements, stock, n)
+
+            hybrid, truncated = enumerate_viable_combinations(
+                deck_ids,
+                requirements,
+                stock,
+                n=n,
+                respect_locks=True,
+                locked_ids=locked_ids,
+                locked_assigned_by_deck=locked_assigned,
+                limit=None,
+            )
+            assert not truncated
+            assert hybrid == _brute_force(
+                deck_ids,
+                requirements,
+                stock,
+                n,
+                respect_locks=True,
+                locked_ids=locked_ids,
+                locked_assigned=locked_assigned,
+            )
+
+
+def test_any_viable_and_scan_agree_with_enumeration() -> None:
+    deck_ids, requirements, stock, _, _ = _sample_collection(7)
+    largest = 0
+    for n in range(1, len(deck_ids) + 1):
+        combos, _ = enumerate_viable_combinations(
+            deck_ids, requirements, stock, n=n, limit=None
+        )
+        assert any_viable_combination(deck_ids, requirements, stock, n=n) == bool(
+            combos
+        )
+        if combos and n >= 2:
+            largest = n
+    assert find_max_viable_size_scan(deck_ids, requirements, stock) == largest
+
+
+def test_deck_over_stock_is_never_included() -> None:
+    # Deck 2 alone needs more copies than exist, so no combination can hold it.
+    requirements = {1: {"sol": 1}, 2: {"sol": 4}, 3: {"cultivate": 1}}
+    stock = {"sol": 2, "cultivate": 1}
+    for n in (1, 2, 3):
+        combos, _ = enumerate_viable_combinations([1, 2, 3], requirements, stock, n=n)
+        assert all(2 not in combo for combo in combos)
+    assert enumerate_viable_combinations([1, 2, 3], requirements, stock, n=2)[0] == [
+        (1, 3)
+    ]
+
+
+def test_should_stop_is_polled_before_any_work() -> None:
+    requirements = {i: {f"c{i}": 1} for i in range(1, 6)}
+    stock = {f"c{i}": 1 for i in range(1, 6)}
+    combos, truncated = enumerate_viable_combinations(
+        list(range(1, 6)),
+        requirements,
+        stock,
+        n=2,
+        should_stop=lambda: True,
+    )
+    assert combos == []
+    assert truncated

@@ -7,7 +7,7 @@ from mtg_rebuilder.algorithms.mana_symbols import color_identity_codes
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
 from mtg_rebuilder.ui.inventory_display import format_inventory_detail_lines
-from mtg_rebuilder.ui.mana_icons import symbols_rich_html
+from mtg_rebuilder.ui.mana_icons import mana_cost_rich_html, symbols_rich_html
 
 
 class InventoryCardDetails(QWidget):
@@ -53,6 +53,7 @@ class InventoryCardDetails(QWidget):
             self._form.addRow(empty)
             return
         color_label = self._translator.t("inventory.table.color")
+        mana_label = self._translator.t("inventory.table.mana_cost")
         for label, value in format_inventory_detail_lines(
             self._row,
             self._translator,
@@ -64,13 +65,17 @@ class InventoryCardDetails(QWidget):
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
             if label == color_label:
-                codes = color_identity_codes(self._row.color_identity)
-                if codes:
-                    value_label.setTextFormat(Qt.TextFormat.RichText)
-                    value_label.setText(symbols_rich_html(codes, size=14))
-                    value_label.setToolTip(value)
-                else:
-                    value_label.setText(value)
+                html = symbols_rich_html(
+                    color_identity_codes(self._row.color_identity), size=14
+                )
+            elif label == mana_label:
+                html = mana_cost_rich_html(self._row.mana_cost, size=14)
+            else:
+                html = ""
+            if html:
+                value_label.setTextFormat(Qt.TextFormat.RichText)
+                value_label.setText(html)
+                value_label.setToolTip(value)
             else:
                 value_label.setText(value)
             self._form.addRow(f"{label}:", value_label)

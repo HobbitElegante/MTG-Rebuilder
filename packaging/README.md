@@ -2,7 +2,7 @@
 
 Build portable binaries with **PyInstaller** (`onedir`). Linux wraps the folder in an **AppImage**. Windows produces `dist/MTG-Rebuilder/MTG-Rebuilder.exe` and zips it for distribution.
 
-**Version / tag:** **`1.2.0`** — Inventory filter chips + color modes + CMC guards, Scryfall mana symbols (tier B), Qt window icon, filter dialog rework (subtypes / free-copies). Bump the version here and in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` before the next tag. Test count before tagging: `uv run pytest` (currently **384**).
+**Version / tag:** **`1.2.1`** — Inventory Mana column, full Scryfall symbol set (hybrids / Phyrexian / snow / 0–20), Windows `.exe` file icon, Viable-plans pruning. Bump the version here and in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` before the next tag. Test count before tagging: `uv run pytest` (currently **399**).
 
 Published builds appear on the repository **Releases** page when a version tag is pushed.
 
@@ -66,6 +66,16 @@ Output:
 - `dist\MTG-Rebuilder\MTG-Rebuilder.exe`
 - `dist\MTG-Rebuilder-windows-x64.zip` (folder zipped for Releases)
 
+### Executable file icon
+
+The spec passes `icon=packaging/mtg_rebuilder.ico`, so the `.exe` shows the app icon in Explorer and the taskbar. The `.ico` is committed (16 / 32 / 48 / 64 / 128 / 256 px, 32-bit) and only used at build time — it does **not** ship inside the package. Regenerate it after editing `resources/app_icon.png`:
+
+```bash
+uv run python scripts/make_windows_icon.py
+```
+
+Sizes that divide 256 are scaled nearest-neighbour to keep the pixel art crisp. `tests/test_packaging_assets.py` parses the container the same way PyInstaller does, so a corrupt `.ico` fails locally instead of shipping a generic icon. On Linux PyInstaller logs `Ignoring icon; supported only on Windows and macOS!` — expected, the AppImage takes its icon from the `.desktop`.
+
 ## Publishing a GitHub Release
 
 CI builds and publishes automatically when you **push a version tag**. Binaries are listed on the release for that tag (and at `/releases/latest`).
@@ -73,29 +83,29 @@ CI builds and publishes automatically when you **push a version tag**. Binaries 
 ### Checklist (each version)
 
 1. Code ready on `main` — local tests green: `uv run pytest`.
-2. Version string in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` / README Features+Latest matches the tag you will create (e.g. `1.2.0`).
+2. Version string in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` / README Features+Latest matches the tag you will create (e.g. `1.2.1`).
 3. Commit and push:
    ```bash
    git push origin main
    ```
 4. Create and push the tag:
    ```bash
-   git tag v1.2.0
-   git push origin v1.2.0
+   git tag v1.2.1
+   git push origin v1.2.1
    ```
 5. Open the repo **Actions** tab — wait for the **Release** workflow (tests + Linux AppImage + Windows zip). Often ~10–20 minutes.
-6. Open **Releases** — `v1.2.0` should list the AppImage and the Windows zip.
+6. Open **Releases** — `v1.2.1` should list the AppImage and the Windows zip.
 7. Optional: edit the release notes.
 
 ### If the workflow fails
 
 1. Open the red job log in **Actions** and fix the issue on `main`.
-2. Either bump to a new tag (`v1.2.1`) after pushing the fix, or delete the bad tag and recreate it on the fixed commit (keeps the same version string):
+2. Either bump to a new tag (`v1.2.2`) after pushing the fix, or delete the bad tag and recreate it on the fixed commit (keeps the same version string):
    ```bash
-   git tag -d v1.2.0
-   git push origin :refs/tags/v1.2.0
-   git tag v1.2.0
-   git push origin v1.2.0
+   git tag -d v1.2.1
+   git push origin :refs/tags/v1.2.1
+   git tag v1.2.1
+   git push origin v1.2.1
    ```
 
 Known headless pitfalls already handled in `.github/workflows/release.yml`:

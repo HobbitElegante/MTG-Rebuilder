@@ -14,6 +14,7 @@ from mtg_rebuilder.algorithms.inventory_filters import (
     sorted_color_letters,
     sorted_rarity_codes,
 )
+from mtg_rebuilder.algorithms.mana_symbols import mana_cost_text
 from mtg_rebuilder.config import UNSPECIFIED_EDITION_LABEL
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
@@ -43,6 +44,20 @@ def format_mana_value(cmc: float | None, translator: Translator) -> str:
     if value.is_integer():
         return str(int(value))
     return f"{value:g}"
+
+
+def format_mana_cost(mana_cost: str | None, translator: Translator) -> str:
+    """Printed cost without braces (``{2}{W/U}`` → ``2 W/U``); ``—`` for lands."""
+    text = mana_cost_text(mana_cost)
+    if not text:
+        return translator.t("inventory.table.colorless")
+    return text
+
+
+def mana_cost_sort_key(row: InventorySummaryRow) -> tuple[float, str]:
+    """Cheapest first, then by printed cost so same-value costs group together."""
+    value = -1.0 if row.cmc is None else float(row.cmc)
+    return (value, mana_cost_text(row.mana_cost))
 
 
 def format_color_identity(
@@ -114,6 +129,10 @@ def format_inventory_detail_lines(
     lines: list[tuple[str, str]] = [
         (translator.t("browse.cards.name"), row.card_name),
         (translator.t("inventory.table.cmc"), format_mana_value(row.cmc, translator)),
+        (
+            translator.t("inventory.table.mana_cost"),
+            format_mana_cost(row.mana_cost, translator),
+        ),
         (
             translator.t("inventory.table.color"),
             format_color_identity(row.color_identity, translator),

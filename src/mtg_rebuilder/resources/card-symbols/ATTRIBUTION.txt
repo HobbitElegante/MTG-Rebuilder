@@ -1,7 +1,10 @@
 Mana and cost symbols are SVG assets from Scryfall
 (https://svgs.scryfall.io/card-symbols/).
 
-Shipped set (tier B): W U B R G C, 0–15, X.
+Shipped set: W U B R G C, generic 0-20, X, S (snow), hybrids (WU … GU),
+monocolor hybrids (2W … 2G), colorless hybrids (CW … CG) and Phyrexian
+(WP … GP, WUP … GUP). Filenames drop the braces and slashes, matching
+Scryfall's own asset names.
 
 Used under the Wizards Fan Content Policy / Scryfall API guidelines.
 Scryfall is not affiliated with or endorsed by this application.
