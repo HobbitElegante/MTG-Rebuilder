@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QAction, QIcon, QShowEvent
 from PySide6.QtWidgets import (
@@ -16,10 +18,9 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStyle,
     QVBoxLayout,
@@ -29,24 +30,36 @@ from PySide6.QtWidgets import (
 from mtg_rebuilder.algorithms.inventory_filters import (
     CARD_TYPE_OPTIONS,
     CMC_OPS,
+    COLOR_MODES,
     RARITY_CODES,
     CmcCondition,
+    ColorMode,
+    FilterChip,
+    FilterChipKind,
     InventoryFilterState,
     WUBRG,
+    cmc_conditions_issue,
+    resolve_cmc_add,
 )
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.ui.combo import (
     SEARCHABLE_COMBO_CONTENTS_LENGTH,
     configure_data_combo,
 )
+from mtg_rebuilder.ui.filter_picker import (
+    PickerResolution,
+    format_picker_hint,
+    resolve_picker_text,
+)
+from mtg_rebuilder.ui.inventory_display import format_cmc_hint
+from mtg_rebuilder.ui.mana_icons import symbol_icon
+from mtg_rebuilder.ui.widgets.chip_bar import Chip, ChipBar
 
 # Type checkboxes per row; 3 keeps the longest label ("Planeswalker") readable
 # at the dialog's minimum width.
 TYPE_COLUMNS = 3
 # Share of the screen the dialog may take before its content starts scrolling.
 MAX_HEIGHT_RATIO = 0.85
-# Selected types/decks lists grow with their content up to this height.
-QUEUE_MAX_HEIGHT = 100
 
 
 class _SectionHeader(QLabel):
@@ -133,22 +146,22 @@ class InventoryFilterDialog(QDialog):
         )
         subtype_picker = QHBoxLayout()
         self._subtype_combo = QComboBox()
-        self._configure_searchable_combo(self._subtype_combo)
+        self._configure_searchable_combo(
+            self._subtype_combo, self._add_selected_subtype
+        )
         self._subtype_add_button = QPushButton()
         self._subtype_add_button.clicked.connect(self._add_selected_subtype)
         subtype_picker.addWidget(self._subtype_combo, 1)
         subtype_picker.addWidget(self._subtype_add_button)
         body.addLayout(subtype_picker)
+        self._subtype_hint = self._picker_hint()
+        body.addWidget(self._subtype_hint)
 
         self._subtype_queue_group = QGroupBox()
         subtype_queue_layout = QVBoxLayout(self._subtype_queue_group)
-        self._subtype_queue = QListWidget()
-        self._subtype_queue.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._subtype_queue.itemDoubleClicked.connect(self._remove_subtype_item)
-        subtype_queue_layout.addWidget(self._subtype_queue)
-        self._subtype_remove_button = QPushButton()
-        self._subtype_remove_button.clicked.connect(self._remove_selected_subtype)
-        subtype_queue_layout.addWidget(self._subtype_remove_button)
+        self._subtype_chips = ChipBar()
+        self._subtype_chips.chip_removed.connect(self._on_subtype_chip_removed)
+        subtype_queue_layout.addWidget(self._subtype_chips)
         body.addWidget(self._subtype_queue_group)
         self._subtype_queue_group.setVisible(False)
 
@@ -164,22 +177,20 @@ class InventoryFilterDialog(QDialog):
 
         deck_picker = QHBoxLayout()
         self._deck_combo = QComboBox()
-        self._configure_searchable_combo(self._deck_combo)
+        self._configure_searchable_combo(self._deck_combo, self._add_selected_deck)
         self._deck_add_button = QPushButton()
         self._deck_add_button.clicked.connect(self._add_selected_deck)
         deck_picker.addWidget(self._deck_combo, 1)
         deck_picker.addWidget(self._deck_add_button)
         body.addLayout(deck_picker)
+        self._deck_hint = self._picker_hint()
+        body.addWidget(self._deck_hint)
 
         self._deck_queue_group = QGroupBox()
         deck_queue_layout = QVBoxLayout(self._deck_queue_group)
-        self._deck_queue = QListWidget()
-        self._deck_queue.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._deck_queue.itemDoubleClicked.connect(self._remove_deck_item)
-        deck_queue_layout.addWidget(self._deck_queue)
-        self._deck_remove_button = QPushButton()
-        self._deck_remove_button.clicked.connect(self._remove_selected_deck)
-        deck_queue_layout.addWidget(self._deck_remove_button)
+        self._deck_chips = ChipBar()
+        self._deck_chips.chip_removed.connect(self._on_deck_chip_removed)
+        deck_queue_layout.addWidget(self._deck_chips)
         body.addWidget(self._deck_queue_group)
         self._deck_queue_group.setVisible(False)
 
@@ -189,15 +200,33 @@ class InventoryFilterDialog(QDialog):
                 "inventory.filters.colors", "inventory.filters.colors_hint"
             )
         )
+        color_mode_row = QHBoxLayout()
+        self._color_mode_label = QLabel()
+        self._color_mode_combo = QComboBox()
+        configure_data_combo(self._color_mode_combo, min_contents=16)
+        for mode in COLOR_MODES:
+            self._color_mode_combo.addItem("", mode.value)
+        self._color_mode_combo.currentIndexChanged.connect(self._on_filters_edited)
+        color_mode_row.addWidget(self._color_mode_label)
+        color_mode_row.addWidget(self._color_mode_combo, 1)
+        body.addLayout(color_mode_row)
+
         colors_row = QHBoxLayout()
         self._color_checks: dict[str, QCheckBox] = {}
         for letter in WUBRG:
-            box = QCheckBox(letter)
+            box = QCheckBox()
+            box.setIcon(symbol_icon(letter, size=16))
             box.toggled.connect(self._on_filters_edited)
             self._color_checks[letter] = box
             colors_row.addWidget(box)
         colors_row.addStretch()
         body.addLayout(colors_row)
+
+        # Zero checkboxes means "no filter", so the empty identity needs its own
+        # switch; it overrides the mode and the letters.
+        self._only_colorless = QCheckBox()
+        self._only_colorless.toggled.connect(self._on_colorless_toggled)
+        body.addWidget(self._only_colorless)
 
         # --- Rarity (same letter-checkbox style as colors) ---
         body.addWidget(
@@ -229,15 +258,23 @@ class InventoryFilterDialog(QDialog):
         configure_data_combo(self._cmc_op, min_contents=4)
         for op in CMC_OPS:
             self._cmc_op.addItem(op)
+        self._cmc_op.currentIndexChanged.connect(self._sync_cmc)
         self._cmc_value = QSpinBox()
         self._cmc_value.setRange(0, 99)
         self._cmc_value.setValue(1)
+        self._cmc_value.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        )
+        self._cmc_value.valueChanged.connect(self._sync_cmc)
         self._cmc_add_button = QPushButton()
         self._cmc_add_button.clicked.connect(self._add_cmc_condition)
-        cmc_add_row.addWidget(self._cmc_op)
-        cmc_add_row.addWidget(self._cmc_value, 1)
+        # Operator stretches; the number stays compact (was the other way around).
+        cmc_add_row.addWidget(self._cmc_op, 1)
+        cmc_add_row.addWidget(self._cmc_value)
         cmc_add_row.addWidget(self._cmc_add_button)
         body.addLayout(cmc_add_row)
+        self._cmc_hint = self._picker_hint()
+        body.addWidget(self._cmc_hint)
         body.addStretch()
 
         footer = QHBoxLayout()
@@ -251,6 +288,7 @@ class InventoryFilterDialog(QDialog):
         footer.addWidget(buttons)
         outer.addLayout(footer)
 
+        self._sync_color_controls()
         self.retranslate()
 
     def _section_header(self, title_key: str, hint_key: str) -> _SectionHeader:
@@ -258,9 +296,21 @@ class InventoryFilterDialog(QDialog):
         self._headers.append((header, title_key, hint_key))
         return header
 
+    def _picker_hint(self) -> QLabel:
+        """Small line that says why *Add* is disabled; hidden when it is not."""
+        label = QLabel()
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        font = label.font()
+        font.setPointSize(max(8, font.pointSize() - 1))
+        label.setFont(font)
+        label.setVisible(False)
+        return label
+
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 (Qt naming)
         super().showEvent(event)
         self._cap_height_to_screen()
+        self._fit_height_to_content()
 
     def sizeHint(self) -> QSize:  # noqa: N802 (Qt naming)
         """Open at the form's natural height; scroll only past the screen cap.
@@ -290,7 +340,23 @@ class InventoryFilterDialog(QDialog):
         if cap:
             self.setMaximumHeight(cap)
 
-    def _configure_searchable_combo(self, combo: QComboBox) -> None:
+    def _fit_height_to_content(self) -> None:
+        """Bypass Qt's first-show 2/3-screen adjustSize so an empty form has no scroll.
+
+        ``show()`` calls ``adjustSize()``, which caps top-level widgets at two
+        thirds of the screen. Our form is taller than that on typical displays
+        but still under the 85% cap in ``sizeHint``, so the default open left a
+        short scrollbar for no reason. Apply the hint ourselves every show.
+        """
+        hint = self.sizeHint()
+        self.resize(
+            max(self.width(), hint.width(), self.minimumWidth()),
+            hint.height(),
+        )
+
+    def _configure_searchable_combo(
+        self, combo: QComboBox, on_commit: Callable[[], None]
+    ) -> None:
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         configure_data_combo(
@@ -314,8 +380,12 @@ class InventoryFilterDialog(QDialog):
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         combo.setCompleter(completer)
-        combo.activated.connect(lambda *_: self._commit_combo(combo))
-        line_edit.returnPressed.connect(lambda: self._commit_combo(combo))
+        # Enter (or picking from the popup) adds straight away when the text
+        # resolves; otherwise the hint below the picker explains why it did not.
+        line_edit.returnPressed.connect(on_commit)
+        combo.activated.connect(lambda *_: on_commit())
+        combo.editTextChanged.connect(lambda *_: self._sync_pickers())
+        combo.currentIndexChanged.connect(lambda *_: self._sync_pickers())
 
     def retranslate(self) -> None:
         t = self._translator.t
@@ -329,19 +399,31 @@ class InventoryFilterDialog(QDialog):
         if subtype_edit is not None:
             subtype_edit.setPlaceholderText(t("inventory.filters.subtypes_search"))
         self._subtype_add_button.setText(t("inventory.filters.subtypes_add"))
-        self._subtype_remove_button.setText(t("inventory.filters.subtypes_remove"))
         self._subtype_queue_group.setTitle(t("inventory.filters.subtypes_selected"))
+        self._subtype_chips.set_texts(
+            remove_tooltip=t("inventory.filters.chip_remove_tip")
+        )
 
         self._exclude_any_armed.setText(t("inventory.filters.decks_any_armed"))
         deck_edit = self._deck_combo.lineEdit()
         if deck_edit is not None:
             deck_edit.setPlaceholderText(t("inventory.filters.decks_search"))
         self._deck_add_button.setText(t("inventory.filters.decks_add"))
-        self._deck_remove_button.setText(t("inventory.filters.decks_remove"))
         self._deck_queue_group.setTitle(t("inventory.filters.decks_selected"))
+        self._deck_chips.set_texts(
+            remove_tooltip=t("inventory.filters.chip_remove_tip")
+        )
 
+        self._color_mode_label.setText(t("inventory.filters.colors_mode"))
+        for index, mode in enumerate(COLOR_MODES):
+            self._color_mode_combo.setItemText(
+                index, t(f"inventory.filters.colors_mode.{mode.value}")
+            )
+        self._only_colorless.setText(t("inventory.filters.colors_colorless"))
         for letter, box in self._color_checks.items():
-            box.setToolTip(t(f"inventory.filters.color.{letter}"))
+            tip = t(f"inventory.filters.color.{letter}")
+            box.setToolTip(tip)
+            box.setAccessibleName(tip)
         for code, box in self._rarity_checks.items():
             box.setToolTip(t(f"inventory.filters.rarity.{code}"))
         self._cmc_add_button.setText(t("inventory.filters.cmc_add"))
@@ -350,6 +432,8 @@ class InventoryFilterDialog(QDialog):
             self._close_button.setText(t("inventory.filters.close"))
         for _op, _spin, remove in self._cmc_rows:
             remove.setText(t("inventory.filters.cmc_remove"))
+        self._sync_pickers()
+        self._sync_cmc()
 
     def set_subtypes(self, subtypes: tuple[str, ...]) -> None:
         """Refresh the subtype picker with the subtypes present in the collection."""
@@ -368,6 +452,7 @@ class InventoryFilterDialog(QDialog):
         if line_edit is not None:
             line_edit.setText(current)
         self._subtype_combo.blockSignals(False)
+        self._sync_pickers()
 
     def set_armed_decks(self, decks: list[tuple[int, str]]) -> None:
         """Refresh the armed-deck picker; drop queue entries that are no longer armed."""
@@ -401,6 +486,7 @@ class InventoryFilterDialog(QDialog):
         else:
             self._deck_combo.setCurrentIndex(-1)
         self._deck_combo.blockSignals(False)
+        self._sync_pickers()
 
         if dropped:
             self.filters_changed.emit()
@@ -425,12 +511,18 @@ class InventoryFilterDialog(QDialog):
             types=frozenset(types),
             subtypes=frozenset(self._selected_subtypes),
             colors=frozenset(colors),
+            color_mode=self._current_color_mode(),
+            only_colorless=self._only_colorless.isChecked(),
             rarities=frozenset(rarities),
             cmc_conditions=conditions,
             exclude_any_armed=self._exclude_any_armed.isChecked(),
             exclude_deck_ids=frozenset(deck_id for deck_id, _ in self._selected_decks),
             only_with_free=self._only_free.isChecked(),
         )
+
+    def selected_deck_names(self) -> dict[int, str]:
+        """Deck id → name for the excluded decks, so chips can be labelled."""
+        return {deck_id: name for deck_id, name in self._selected_decks}
 
     def clear_filters(self) -> None:
         self._selected_subtypes.clear()
@@ -440,6 +532,7 @@ class InventoryFilterDialog(QDialog):
         for box in (
             self._only_free,
             self._exclude_any_armed,
+            self._only_colorless,
             *self._type_checks.values(),
             *self._color_checks.values(),
             *self._rarity_checks.values(),
@@ -447,73 +540,148 @@ class InventoryFilterDialog(QDialog):
             box.blockSignals(True)
             box.setChecked(False)
             box.blockSignals(False)
-        subtype_edit = self._subtype_combo.lineEdit()
-        if subtype_edit is not None:
-            subtype_edit.clear()
-        self._subtype_combo.setCurrentIndex(-1)
-        deck_edit = self._deck_combo.lineEdit()
-        if deck_edit is not None:
-            deck_edit.clear()
-        self._deck_combo.setCurrentIndex(-1)
+        self._color_mode_combo.blockSignals(True)
+        self._color_mode_combo.setCurrentIndex(0)
+        self._color_mode_combo.blockSignals(False)
+        self._sync_color_controls()
+        self._clear_combo_text(self._subtype_combo)
+        self._clear_combo_text(self._deck_combo)
         while self._cmc_rows:
-            self._remove_cmc_row(self._cmc_rows[0][2])
+            self._remove_cmc_row(self._cmc_rows[0][2], notify=False)
+        self._sync_pickers()
+        self._sync_cmc()
         self.filters_changed.emit()
 
-    def _commit_combo(self, combo: QComboBox) -> None:
-        data = self._combo_selection_data(combo)
-        if data is None:
+    def remove_chip(self, chip: FilterChip) -> None:
+        """Drop one active filter, as shown in the chip bar above the table."""
+        if chip.kind is FilterChipKind.SUBTYPE:
+            self._remove_subtype(chip.value)
             return
-        index = combo.findData(data)
-        if index < 0:
+        if chip.kind is FilterChipKind.DECK:
+            self._remove_deck(int(chip.value))
             return
-        combo.blockSignals(True)
-        combo.setCurrentIndex(index)
-        combo.blockSignals(False)
+        if chip.kind is FilterChipKind.CMC:
+            index = int(chip.value)
+            if 0 <= index < len(self._cmc_rows):
+                self._remove_cmc_row(self._cmc_rows[index][2])
+            return
+        if chip.kind is FilterChipKind.TYPE:
+            box = self._type_checks.get(chip.value)
+            if box is not None:
+                box.setChecked(False)
+            return
+        if chip.kind is FilterChipKind.ONLY_FREE:
+            self._only_free.setChecked(False)
+            return
+        if chip.kind is FilterChipKind.ANY_ARMED:
+            self._exclude_any_armed.setChecked(False)
+            return
+        if chip.kind is FilterChipKind.COLORLESS:
+            self._only_colorless.setChecked(False)
+            return
+        if chip.kind is FilterChipKind.COLORS:
+            self._uncheck_group(self._color_checks.values())
+            return
+        if chip.kind is FilterChipKind.RARITY:
+            self._uncheck_group(self._rarity_checks.values())
 
-    def _combo_selection_data(self, combo: QComboBox) -> object | None:
-        typed = combo.currentText().strip()
-        if not typed:
-            return None
-        index = combo.currentIndex()
-        if index >= 0 and combo.itemText(index) == typed:
-            return combo.itemData(index)
-        needle = typed.casefold()
-        exact: list[object] = []
-        partial: list[object] = []
-        for i in range(combo.count()):
-            label = combo.itemText(i)
-            data = combo.itemData(i)
-            if label.casefold() == needle:
-                exact.append(data)
-            elif needle in label.casefold():
-                partial.append(data)
-        if len(exact) == 1:
-            return exact[0]
-        if not exact and len(partial) == 1:
-            return partial[0]
-        return None
+    def _uncheck_group(self, boxes: Iterable[QCheckBox]) -> None:
+        """Clear a whole checkbox group with a single ``filters_changed``."""
+        changed = False
+        for box in boxes:
+            if not box.isChecked():
+                continue
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+            changed = True
+        if changed:
+            self.filters_changed.emit()
 
-    def _add_selected_subtype(self) -> None:
-        data = self._combo_selection_data(self._subtype_combo)
-        if not isinstance(data, str):
-            return
-        if data in self._selected_subtypes:
-            return
-        self._selected_subtypes.append(data)
-        self._rebuild_subtype_queue()
-        line_edit = self._subtype_combo.lineEdit()
+    def _current_color_mode(self) -> ColorMode:
+        try:
+            return ColorMode(self._color_mode_combo.currentData())
+        except ValueError:
+            return ColorMode.AT_MOST
+
+    def _on_colorless_toggled(self, _checked: bool) -> None:
+        self._sync_color_controls()
+        self.filters_changed.emit()
+
+    def _sync_color_controls(self) -> None:
+        """"Only colorless" wins, so the mode and the letters go grey."""
+        enabled = not self._only_colorless.isChecked()
+        self._color_mode_label.setEnabled(enabled)
+        self._color_mode_combo.setEnabled(enabled)
+        for box in self._color_checks.values():
+            box.setEnabled(enabled)
+
+    def _clear_combo_text(self, combo: QComboBox) -> None:
+        line_edit = combo.lineEdit()
         if line_edit is not None:
             line_edit.clear()
-        self._subtype_combo.setCurrentIndex(-1)
+        combo.setCurrentIndex(-1)
+
+    def _combo_options(self, combo: QComboBox) -> list[str]:
+        return [combo.itemText(index) for index in range(combo.count())]
+
+    def _resolve_subtype(self) -> PickerResolution:
+        return resolve_picker_text(
+            self._combo_options(self._subtype_combo),
+            self._subtype_combo.currentText(),
+            self._selected_subtypes,
+        )
+
+    def _resolve_deck(self) -> PickerResolution:
+        return resolve_picker_text(
+            self._combo_options(self._deck_combo),
+            self._deck_combo.currentText(),
+            [name for _deck_id, name in self._selected_decks],
+        )
+
+    def _sync_pickers(self) -> None:
+        """Enable each *Add* only when its text resolves, and say why if not."""
+        self._apply_picker_state(
+            self._resolve_subtype(),
+            self._subtype_combo,
+            self._subtype_add_button,
+            self._subtype_hint,
+        )
+        self._apply_picker_state(
+            self._resolve_deck(),
+            self._deck_combo,
+            self._deck_add_button,
+            self._deck_hint,
+        )
+
+    def _apply_picker_state(
+        self,
+        resolution: PickerResolution,
+        combo: QComboBox,
+        button: QPushButton,
+        hint: QLabel,
+    ) -> None:
+        button.setEnabled(resolution.can_add)
+        message = format_picker_hint(
+            resolution, combo.currentText(), self._translator
+        )
+        hint.setText(message)
+        hint.setVisible(bool(message))
+
+    def _add_selected_subtype(self) -> None:
+        resolution = self._resolve_subtype()
+        if not resolution.can_add:
+            self._sync_pickers()
+            return
+        self._selected_subtypes.append(resolution.label)
+        self._rebuild_subtype_queue()
+        self._clear_combo_text(self._subtype_combo)
+        self._sync_pickers()
         self.filters_changed.emit()
 
-    def _remove_subtype_item(self, item: QListWidgetItem) -> None:
-        self._remove_subtype(item.text())
-
-    def _remove_selected_subtype(self) -> None:
-        item = self._subtype_queue.currentItem()
-        if item is not None:
-            self._remove_subtype(item.text())
+    def _on_subtype_chip_removed(self, key: object) -> None:
+        if isinstance(key, str):
+            self._remove_subtype(key)
 
     def _remove_subtype(self, subtype: str) -> None:
         if subtype not in self._selected_subtypes:
@@ -522,45 +690,32 @@ class InventoryFilterDialog(QDialog):
             name for name in self._selected_subtypes if name != subtype
         ]
         self._rebuild_subtype_queue()
+        self._sync_pickers()
         self.filters_changed.emit()
 
     def _rebuild_subtype_queue(self) -> None:
-        self._subtype_queue.clear()
-        for subtype in self._selected_subtypes:
-            self._subtype_queue.addItem(subtype)
-        self._fit_queue_height(self._subtype_queue)
+        self._subtype_chips.set_chips(
+            [Chip(key=name, label=name) for name in self._selected_subtypes]
+        )
         self._subtype_queue_group.setVisible(bool(self._selected_subtypes))
 
     def _add_selected_deck(self) -> None:
-        data = self._combo_selection_data(self._deck_combo)
-        if not isinstance(data, int):
+        resolution = self._resolve_deck()
+        if not resolution.can_add:
+            self._sync_pickers()
             return
-        if any(deck_id == data for deck_id, _ in self._selected_decks):
+        deck_id = self._deck_combo.itemData(resolution.index)
+        if not isinstance(deck_id, int):
             return
-        name = next(
-            (n for deck_id, n in self._armed_decks if deck_id == data),
-            self._deck_combo.currentText().strip(),
-        )
-        self._selected_decks.append((data, name))
+        self._selected_decks.append((deck_id, resolution.label))
         self._rebuild_deck_queue()
-        line_edit = self._deck_combo.lineEdit()
-        if line_edit is not None:
-            line_edit.clear()
-        self._deck_combo.setCurrentIndex(-1)
+        self._clear_combo_text(self._deck_combo)
+        self._sync_pickers()
         self.filters_changed.emit()
 
-    def _remove_deck_item(self, item: QListWidgetItem) -> None:
-        deck_id = item.data(Qt.ItemDataRole.UserRole)
-        if isinstance(deck_id, int):
-            self._remove_deck(deck_id)
-
-    def _remove_selected_deck(self) -> None:
-        item = self._deck_queue.currentItem()
-        if item is None:
-            return
-        deck_id = item.data(Qt.ItemDataRole.UserRole)
-        if isinstance(deck_id, int):
-            self._remove_deck(deck_id)
+    def _on_deck_chip_removed(self, key: object) -> None:
+        if isinstance(key, int):
+            self._remove_deck(key)
 
     def _remove_deck(self, deck_id: int) -> None:
         before = len(self._selected_decks)
@@ -570,30 +725,25 @@ class InventoryFilterDialog(QDialog):
         if len(self._selected_decks) == before:
             return
         self._rebuild_deck_queue()
+        self._sync_pickers()
         self.filters_changed.emit()
 
     def _rebuild_deck_queue(self) -> None:
-        self._deck_queue.clear()
-        for deck_id, name in self._selected_decks:
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, deck_id)
-            self._deck_queue.addItem(item)
-        self._fit_queue_height(self._deck_queue)
+        self._deck_chips.set_chips(
+            [Chip(key=deck_id, label=name) for deck_id, name in self._selected_decks]
+        )
         self._deck_queue_group.setVisible(bool(self._selected_decks))
 
-    def _fit_queue_height(self, queue: QListWidget) -> None:
-        """Grow the list with its items instead of reserving a fixed box."""
-        rows = max(1, queue.count())
-        row_height = (
-            queue.sizeHintForRow(0)
-            if queue.count()
-            else queue.fontMetrics().height() + 4
-        )
-        queue.setFixedHeight(
-            min(QUEUE_MAX_HEIGHT, rows * row_height + 2 * queue.frameWidth())
-        )
-
     def _add_cmc_condition(self) -> None:
+        resolution = resolve_cmc_add(
+            self.filter_state().cmc_conditions,
+            self._cmc_op.currentText(),
+            float(self._cmc_value.value()),
+        )
+        if not resolution.can_add:
+            self._sync_cmc()
+            return
+
         op = QComboBox()
         configure_data_combo(op, min_contents=4)
         for symbol in CMC_OPS:
@@ -604,23 +754,29 @@ class InventoryFilterDialog(QDialog):
         spin = QSpinBox()
         spin.setRange(0, 99)
         spin.setValue(self._cmc_value.value())
+        spin.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        )
         spin.valueChanged.connect(self._on_filters_edited)
 
         remove = QPushButton(self._translator.t("inventory.filters.cmc_remove"))
         row_widget = QWidget()
         row = QHBoxLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(op)
-        row.addWidget(spin, 1)
+        row.addWidget(op, 1)
+        row.addWidget(spin)
         row.addWidget(remove)
         remove.clicked.connect(lambda: self._remove_cmc_row(remove))
 
         self._cmc_list_layout.addWidget(row_widget)
         self._cmc_rows.append((op, spin, remove))
+        self._sync_cmc()
         self.filters_changed.emit()
 
-    def _remove_cmc_row(self, remove_button: QPushButton) -> None:
-        for index, (op, spin, button) in enumerate(self._cmc_rows):
+    def _remove_cmc_row(
+        self, remove_button: QPushButton, *, notify: bool = True
+    ) -> None:
+        for index, (_op, _spin, button) in enumerate(self._cmc_rows):
             if button is not remove_button:
                 continue
             widget = button.parentWidget()
@@ -628,8 +784,24 @@ class InventoryFilterDialog(QDialog):
             if widget is not None:
                 self._cmc_list_layout.removeWidget(widget)
                 widget.deleteLater()
-            self.filters_changed.emit()
+            if notify:
+                self._sync_cmc()
+                self.filters_changed.emit()
             return
 
     def _on_filters_edited(self, *_args: object) -> None:
+        self._sync_cmc()
         self.filters_changed.emit()
+
+    def _sync_cmc(self, *_args: object) -> None:
+        """Enable CMC *Add* only when the draft row is useful; warn on bad sets."""
+        existing = self.filter_state().cmc_conditions
+        op = self._cmc_op.currentText()
+        value = float(self._cmc_value.value())
+        add = resolve_cmc_add(existing, op, value)
+        self._cmc_add_button.setEnabled(add.can_add)
+        message = format_cmc_hint(
+            add, cmc_conditions_issue(existing), op, value, self._translator
+        )
+        self._cmc_hint.setText(message)
+        self._cmc_hint.setVisible(bool(message))

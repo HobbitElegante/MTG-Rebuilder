@@ -1,7 +1,17 @@
+from mtg_rebuilder.algorithms.inventory_filters import (
+    CmcCondition,
+    ColorMode,
+    FilterChip,
+    FilterChipKind,
+    InventoryFilterState,
+)
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
 from mtg_rebuilder.ui.inventory_display import (
     format_color_identity,
+    format_filter_button_label,
+    format_filter_chip_label,
+    format_filter_chips,
     format_inventory_decks,
     format_rarity_summary,
     rarity_sort_rank,
@@ -48,6 +58,74 @@ def test_format_inventory_decks_lists_names_only() -> None:
 def test_format_inventory_decks_spanish_placeholder() -> None:
     translator = Translator("es")
     assert format_inventory_decks(_row(free=1, total=1), translator) == "—"
+
+
+def test_filter_button_counts_instead_of_ticking() -> None:
+    translator = Translator("en")
+    assert format_filter_button_label(InventoryFilterState(), translator) == "Filter"
+    state = InventoryFilterState(
+        only_with_free=True, types=frozenset({"Land", "Creature"})
+    )
+    assert format_filter_button_label(state, translator) == "Filter (3)"
+
+
+def test_filter_button_label_is_translated() -> None:
+    state = InventoryFilterState(only_with_free=True)
+    assert format_filter_button_label(state, Translator("es")) == "Filtrar (1)"
+
+
+def test_chip_labels_name_what_they_filter() -> None:
+    translator = Translator("en")
+    state = InventoryFilterState(
+        only_with_free=True,
+        types=frozenset({"Creature"}),
+        subtypes=frozenset({"Elf"}),
+        exclude_any_armed=True,
+        exclude_deck_ids=frozenset({7}),
+        rarities=frozenset({"M"}),
+        cmc_conditions=(CmcCondition("<=", 2),),
+    )
+    labels = [
+        label
+        for _chip, label in format_filter_chips(state, translator, {7: "Kellan"})
+    ]
+    assert labels == [
+        "With free copies",
+        "Type: Creature",
+        "Subtype: Elf",
+        "Not in armed decks",
+        "Not in: Kellan",
+        "Rarity: M",
+        "MV <= 2",
+    ]
+
+
+def test_unknown_deck_id_falls_back_to_the_raw_value() -> None:
+    translator = Translator("en")
+    state = InventoryFilterState(exclude_deck_ids=frozenset({99}))
+    labels = [label for _chip, label in format_filter_chips(state, translator)]
+    assert labels == ["Not in: 99"]
+
+
+def test_color_chip_shows_the_mode_and_wubrg_order() -> None:
+    translator = Translator("en")
+    colors = frozenset({"G", "W"})
+    chip = FilterChip(FilterChipKind.COLORS)
+    expected = {
+        ColorMode.AT_MOST: "Colors ≤ WG",
+        ColorMode.EXACT: "Colors = WG",
+        ColorMode.AT_LEAST: "Colors ≥ WG",
+    }
+    for mode, label in expected.items():
+        state = InventoryFilterState(colors=colors, color_mode=mode)
+        assert format_filter_chip_label(chip, state, translator) == label
+
+
+def test_colorless_chip_replaces_the_color_chip() -> None:
+    translator = Translator("en")
+    state = InventoryFilterState(only_colorless=True, colors=frozenset({"R"}))
+    labels = [label for _chip, label in format_filter_chips(state, translator)]
+    assert labels == ["Colorless"]
 
 
 def test_format_color_identity_wubrg() -> None:

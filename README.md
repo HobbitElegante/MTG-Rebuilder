@@ -12,7 +12,8 @@ Prebuilt **Downloads** below track **`v1.1.1`** once that tag is published (Inve
 
 - Physical inventory in SQLite, grouped by card: total / free / assigned
 - Inventory table: Name · CMC · Colors (WUBRG) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
-- Search by card name; **Filter** dialog for free copies, type, **subtype (Elf, Aura…)**, armed-deck exclusion, color identity (`id≤`), **rarity (C/U/R/M)**, and mana value
+- Search by card name; **Filter** dialog for free copies, type, **subtype (Elf, Aura…)**, armed-deck exclusion, color identity (**at most / exactly / at least**, plus **colorless only**), **rarity (C/U/R/M)**, and mana value
+- The Filter button counts what is on (`Filter (3)`) and every active filter shows up as a **chip** above the table, so you can drop one without reopening the dialog
 - **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; arrow-key navigation (Right continues on the next row) plus Home/End; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview
 - Add a single card or paste a whole list (multi-format / Moxfield or Archidekt URL) into free inventory
 - Optional **edition tracking**: turn it on in Browse → Customize to get an Edition column, per-copy set codes, and a prompt after rebuilding a deck
@@ -107,7 +108,7 @@ In development, the SQLite database is created at `data/mtg_rebuilder.db` (gitig
 uv run pytest
 ```
 
-329 tests passing locally (includes path-migration cases after rename). The Inventory widget tests (image grid, filter dialog) need Qt: they run locally (`QT_QPA_PLATFORM=offscreen`) and skip automatically on the headless CI runner.
+384 tests passing locally (includes path-migration cases after rename). The Inventory widget tests (image grid, filter dialog, chip bar) need Qt: they run locally (`QT_QPA_PLATFORM=offscreen`) and skip automatically on the headless CI runner.
 
 ## First-time setup
 
@@ -151,12 +152,14 @@ Tip: **Edit list** can grow or shrink the list (add forgotten lands, change quan
 1. Open the **Inventory** tab.
 2. Table columns: **Name** · **CMC** · **Colors** · **Rarity** · **Total** · **Free** · **Assigned** · **In decks** (deck names only, or — if fully free). With edition tracking on, an **Edition** column appears. CMC is the numeric mana value (e.g. GGG → 3; hover the header for the full label). Colors show WUBRG identity (— if colorless). Name is the wide column.
 3. Click a column header to sort (text A–Z / Z–A; numbers high→low first, then reverse). Hover **In decks** for the full list when a card is in several decks.
-4. Use the search bar to filter by card name. **Filter** opens a dialog for: only cards with free copies, type (checkboxes), **subtype** (search and add — the picker lists the subtypes present in your collection, and they narrow the checked types), hide cards in armed decks (all or specific), color identity at most (`id≤`), rarity (C/U/R/M), and mana-value comparisons. Each section title carries an ⓘ with its help text, and the form scrolls instead of growing past the screen.
-5. **Image view** *(next to Filter; requires card images enabled in Customize)* replaces the table with a scrollable grid (up to five faces per row). Missing local JPEGs download in the background as tiles appear; a tile without art yet shows the card name and a loading note. Move with the arrow keys (Right past the end of a row continues on the leftmost card below), Home/End for the first/last card, and Enter to refresh the preview. While Image view is on, **Sort by** and ascending/descending reorder the grid using the same keys as the table headers. Select a tile to refresh the side preview and the field list under it.
-6. **Add new card to collection** — search the local Scryfall cache and add free copies (−/+). Basics and tokens are excluded (unlimited / not trackable).
-7. **Add list to collection** — opens a full-tab paste area (Load file · Confirm list · Cancel). After confirm, adjust how many copies to add per identified card (starts at 1; 0 or Remove excludes), replace mis-resolved cards, and on the right edit unrecognized lines then **Recheck** or **Remove** them. Confirm adds free inventory copies.
-8. Select a row (or a grid tile) → **Edit copy count** — change total physical copies (floor = copies assigned to armed decks).
-9. The panel on the right shows the selected card and inventory fields. Missing preview images are fetched from Scryfall in the background and cached; drag the splitter to resize it.
+4. Use the search bar to filter by card name. **Filter** opens a dialog for: only cards with free copies, type (checkboxes), **subtype** (search and add — the picker lists the subtypes present in your collection, and they narrow the checked types), hide cards in armed decks (all or specific), color identity, rarity (C/U/R/M), and mana-value comparisons. Each section title carries an ⓘ with its help text, and the form scrolls instead of growing past the screen. The pickers disable **Add** and say why when what you typed matches nothing, matches several options, or is already on the list.
+5. Color identity has a **match mode**: *at most* these colors (Scryfall `id≤`), *exactly* them, or *at least* them. No letters checked means no color filter, so cards with no color at all have their own **Only colorless cards** switch, which overrides the letters.
+6. The **Filter** button shows how many filters are on (`Filter (3)`), and each one becomes a **chip** above the table. Click a chip's ✕ to drop that filter, or **Clear all** to drop the lot — no need to reopen the dialog.
+7. **Image view** *(next to Filter; requires card images enabled in Customize)* replaces the table with a scrollable grid (up to five faces per row). Missing local JPEGs download in the background as tiles appear; a tile without art yet shows the card name and a loading note. Move with the arrow keys (Right past the end of a row continues on the leftmost card below), Home/End for the first/last card, and Enter to refresh the preview. While Image view is on, **Sort by** and ascending/descending reorder the grid using the same keys as the table headers. Select a tile to refresh the side preview and the field list under it.
+8. **Add new card to collection** — search the local Scryfall cache and add free copies (−/+). Basics and tokens are excluded (unlimited / not trackable).
+9. **Add list to collection** — opens a full-tab paste area (Load file · Confirm list · Cancel). After confirm, adjust how many copies to add per identified card (starts at 1; 0 or Remove excludes), replace mis-resolved cards, and on the right edit unrecognized lines then **Recheck** or **Remove** them. Confirm adds free inventory copies.
+10. Select a row (or a grid tile) → **Edit copy count** — change total physical copies (floor = copies assigned to armed decks).
+11. The panel on the right shows the selected card and inventory fields. Missing preview images are fetched from Scryfall in the background and cached; drag the splitter to resize it.
 
 ## Optimizer
 

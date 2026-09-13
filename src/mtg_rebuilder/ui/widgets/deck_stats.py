@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from mtg_rebuilder.algorithms.deck_stats import DeckStatistics
 from mtg_rebuilder.i18n import Translator
+from mtg_rebuilder.ui.mana_icons import pips_rich_html
 from mtg_rebuilder.ui.widgets.card_preview import PREVIEW_ASPECT, PREVIEW_MIN_WIDTH
 
 # Both read well on the light and the dark Fusion palettes.
@@ -261,6 +262,7 @@ class DeckStatsColumn(QWidget):
         self._types_label.setTextFormat(Qt.TextFormat.RichText)
         self._pips_label = QLabel("")
         self._pips_label.setWordWrap(True)
+        self._pips_label.setTextFormat(Qt.TextFormat.RichText)
         stats_layout.addWidget(self._counts_label)
         stats_layout.addWidget(self._avg_label)
         stats_layout.addWidget(self._types_label)
@@ -308,9 +310,7 @@ class DeckStatsColumn(QWidget):
         self._types_label.setText(format_types_html(stats, self._translator))
         pips_lines = []
         if stats.color_pips:
-            pips = " · ".join(
-                f"{letter} {qty}" for letter, qty in stats.color_pips
-            )
+            pips = pips_rich_html(stats.color_pips)
             pips_lines.append(
                 self._translator.t("decks.stats.pips").format(value=pips)
             )
@@ -320,7 +320,7 @@ class DeckStatsColumn(QWidget):
                     count=stats.unknown_cards
                 )
             )
-        self._pips_label.setText("\n".join(pips_lines))
+        self._pips_label.setText("<br>".join(pips_lines))
 
     def _update_extras_visibility(self) -> None:
         needed = (

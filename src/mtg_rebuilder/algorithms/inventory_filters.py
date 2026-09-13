@@ -1,8 +1,12 @@
 """Local inventory panel filters (type / subtype / color / rarity / mana value / decks).
 
-Independent of Scryfall syntax. Color identity uses Scryfall ``id<=`` semantics:
-at most the selected colors (colorless included). Zero or all five color
-checkboxes means no color filter.
+Independent of Scryfall syntax. Color identity is compared through a
+``ColorMode``: at most (Scryfall ``id<=``), exactly, or at least the checked
+letters. "At most" with all five checked keeps everything, so it counts as no
+filter; the other two modes are meaningful with any non-empty selection. An
+empty selection never means "colorless" — that is the separate
+``only_colorless`` flag, because otherwise the empty identity would be
+unreachable.
 
 Types and subtypes are two separate groups: OR inside each one, AND between
 them, so ``Creature`` + ``Elf`` means "elf creatures". Subtypes are whatever
@@ -15,12 +19,16 @@ across selected rarities. ``special`` / ``bonus`` are not offered in the UI.
 
 Deck exclusion uses physical assignments (``CardAssignment``): hide cards that
 have a copy assigned to any armed deck, or to selected deck ids.
+
+``filter_chips`` breaks an active state into individually removable pieces so
+the UI can show them above the table and drop them one by one.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 WUBRG = ("W", "U", "B", "R", "G")
@@ -52,6 +60,21 @@ CARD_TYPE_OPTIONS: tuple[str, ...] = (
 
 CMC_OPS: tuple[str, ...] = ("=", "!=", "<", "<=", ">", ">=")
 
+
+class ColorMode(StrEnum):
+    """How the checked WUBRG letters are compared against a card's identity."""
+
+    AT_MOST = "at_most"
+    EXACT = "exact"
+    AT_LEAST = "at_least"
+
+
+COLOR_MODES: tuple[ColorMode, ...] = (
+    ColorMode.AT_MOST,
+    ColorMode.EXACT,
+    ColorMode.AT_LEAST,
+)
+
 # Type lines separate supertypes/types from subtypes with an em dash; a few
 # sources use the en dash or a plain hyphen instead.
 _SUBTYPE_SEPARATORS = ("—", "–", " - ")
@@ -82,8 +105,11 @@ class InventoryFilterState:
     types: frozenset[str] = frozenset()
     # Subtypes (past the em dash). OR between them, AND against `types`.
     subtypes: frozenset[str] = frozenset()
-    # Subset of WUBRG. Empty or all five → no color filter.
+    # Subset of WUBRG, compared through `color_mode`.
     colors: frozenset[str] = frozenset()
+    color_mode: ColorMode = ColorMode.AT_MOST
+    # Keep only cards with an empty color identity; overrides `colors`.
+    only_colorless: bool = False
     # Subset of RARITY_CODES (C/U/R/M). Empty or all four → no rarity filter.
     rarities: frozenset[str] = frozenset()
     cmc_conditions: tuple[CmcCondition, ...] = ()
@@ -96,7 +122,13 @@ class InventoryFilterState:
 
     @property
     def color_filter_active(self) -> bool:
-        return bool(self.colors) and self.colors != frozenset(WUBRG)
+        """Whether the WUBRG selection narrows anything, given the mode."""
+        if self.only_colorless or not self.colors:
+            return False
+        if self.color_mode is ColorMode.AT_MOST:
+            # "At most all five colors" keeps every card.
+            return self.colors != frozenset(WUBRG)
+        return True
 
     @property
     def rarity_filter_active(self) -> bool:
@@ -107,6 +139,7 @@ class InventoryFilterState:
         return (
             bool(self.types)
             or bool(self.subtypes)
+            or self.only_colorless
             or self.color_filter_active
             or self.rarity_filter_active
             or bool(self.cmc_conditions)
@@ -114,6 +147,66 @@ class InventoryFilterState:
             or bool(self.exclude_deck_ids)
             or self.only_with_free
         )
+
+
+class FilterChipKind(StrEnum):
+    """One removable piece of an active filter state."""
+
+    ONLY_FREE = "only_free"
+    TYPE = "type"
+    SUBTYPE = "subtype"
+    ANY_ARMED = "any_armed"
+    DECK = "deck"
+    COLORS = "colors"
+    COLORLESS = "colorless"
+    RARITY = "rarity"
+    CMC = "cmc"
+
+
+@dataclass(frozen=True)
+class FilterChip:
+    """``value`` identifies the chip inside its kind (type name, deck id, …)."""
+
+    kind: FilterChipKind
+    value: str = ""
+
+
+def filter_chips(state: InventoryFilterState) -> tuple[FilterChip, ...]:
+    """Active filters as individually removable chips, in dialog order.
+
+    Colors and rarity are one chip each: the mode applies to the whole group,
+    so dropping a single letter would not be a well-defined action.
+    """
+    chips: list[FilterChip] = []
+    if state.only_with_free:
+        chips.append(FilterChip(FilterChipKind.ONLY_FREE))
+    chips.extend(
+        FilterChip(FilterChipKind.TYPE, name) for name in sorted(state.types)
+    )
+    chips.extend(
+        FilterChip(FilterChipKind.SUBTYPE, name) for name in sorted(state.subtypes)
+    )
+    if state.exclude_any_armed:
+        chips.append(FilterChip(FilterChipKind.ANY_ARMED))
+    chips.extend(
+        FilterChip(FilterChipKind.DECK, str(deck_id))
+        for deck_id in sorted(state.exclude_deck_ids)
+    )
+    if state.only_colorless:
+        chips.append(FilterChip(FilterChipKind.COLORLESS))
+    elif state.color_filter_active:
+        chips.append(FilterChip(FilterChipKind.COLORS))
+    if state.rarity_filter_active:
+        chips.append(FilterChip(FilterChipKind.RARITY))
+    chips.extend(
+        FilterChip(FilterChipKind.CMC, str(index))
+        for index in range(len(state.cmc_conditions))
+    )
+    return tuple(chips)
+
+
+def active_filter_count(state: InventoryFilterState) -> int:
+    return len(filter_chips(state))
 
 
 def color_identity_letters(color_identity: str | None) -> frozenset[str]:
@@ -145,6 +238,78 @@ def matches_cmc(card_cmc: float | None, condition: CmcCondition) -> bool:
     if op == ">=":
         return actual >= target
     return False
+
+
+# Domain of the filter spin (0–99). Enough to decide AND-satisfiability for UI ops.
+CMC_FILTER_DOMAIN: range = range(0, 100)
+
+
+class CmcAddStatus(StrEnum):
+    """Whether the draft row can be appended to the active CMC list."""
+
+    OK = "ok"
+    DUPLICATE = "duplicate"
+    CONFLICT = "conflict"
+
+
+@dataclass(frozen=True)
+class CmcAddResolution:
+    status: CmcAddStatus
+
+    @property
+    def can_add(self) -> bool:
+        return self.status is CmcAddStatus.OK
+
+
+class CmcSetIssue(StrEnum):
+    """Problems already present among the committed CMC rows."""
+
+    NONE = "none"
+    DUPLICATE = "duplicate"
+    IMPOSSIBLE = "impossible"
+
+
+def has_duplicate_cmc_conditions(conditions: Sequence[CmcCondition]) -> bool:
+    seen: set[tuple[str, float]] = set()
+    for condition in conditions:
+        key = (condition.op, float(condition.value))
+        if key in seen:
+            return True
+        seen.add(key)
+    return False
+
+
+def cmc_conditions_satisfiable(conditions: Sequence[CmcCondition]) -> bool:
+    """True if some integer mana value in the filter domain matches every condition."""
+    if not conditions:
+        return True
+    return any(
+        all(matches_cmc(float(value), condition) for condition in conditions)
+        for value in CMC_FILTER_DOMAIN
+    )
+
+
+def cmc_conditions_issue(conditions: Sequence[CmcCondition]) -> CmcSetIssue:
+    if has_duplicate_cmc_conditions(conditions):
+        return CmcSetIssue.DUPLICATE
+    if conditions and not cmc_conditions_satisfiable(conditions):
+        return CmcSetIssue.IMPOSSIBLE
+    return CmcSetIssue.NONE
+
+
+def resolve_cmc_add(
+    existing: Sequence[CmcCondition], op: str, value: float
+) -> CmcAddResolution:
+    """Decide if appending ``op``/``value`` is redundant or would empty the result."""
+    proposed = CmcCondition(op, float(value))
+    if any(
+        condition.op == proposed.op and float(condition.value) == proposed.value
+        for condition in existing
+    ):
+        return CmcAddResolution(CmcAddStatus.DUPLICATE)
+    if not cmc_conditions_satisfiable((*existing, proposed)):
+        return CmcAddResolution(CmcAddStatus.CONFLICT)
+    return CmcAddResolution(CmcAddStatus.OK)
 
 
 def matches_type_line(type_line: str | None, selected: frozenset[str]) -> bool:
@@ -206,6 +371,44 @@ def matches_color_identity_at_most(
     return have <= allowed
 
 
+def matches_color_identity_exact(
+    color_identity: str | None, wanted: frozenset[str]
+) -> bool:
+    """``id=``: the identity is exactly ``wanted``."""
+    return color_identity_letters(color_identity) == wanted
+
+
+def matches_color_identity_at_least(
+    color_identity: str | None, required: frozenset[str]
+) -> bool:
+    """``id>=``: the identity contains every color in ``required``."""
+    return color_identity_letters(color_identity) >= required
+
+
+def matches_color_identity(
+    color_identity: str | None, selected: frozenset[str], mode: ColorMode
+) -> bool:
+    if mode is ColorMode.EXACT:
+        return matches_color_identity_exact(color_identity, selected)
+    if mode is ColorMode.AT_LEAST:
+        return matches_color_identity_at_least(color_identity, selected)
+    return matches_color_identity_at_most(color_identity, selected)
+
+
+def is_colorless(color_identity: str | None) -> bool:
+    return not color_identity_letters(color_identity)
+
+
+def sorted_color_letters(colors: frozenset[str]) -> tuple[str, ...]:
+    """Selected letters in WUBRG order, for labels."""
+    return tuple(letter for letter in WUBRG if letter in colors)
+
+
+def sorted_rarity_codes(codes: frozenset[str]) -> tuple[str, ...]:
+    """Selected rarity codes in C→U→R→M order, for labels."""
+    return tuple(code for code in RARITY_CODES if code in codes)
+
+
 def matches_rarity(
     card_rarities: frozenset[str], selected_codes: frozenset[str]
 ) -> bool:
@@ -223,8 +426,12 @@ def matches_panel_filters(card: FilterableCard, state: InventoryFilterState) -> 
         return False
     if state.only_with_free and card.free_copies <= 0:
         return False
+    if state.only_colorless and not is_colorless(card.color_identity):
+        return False
     if state.color_filter_active:
-        if not matches_color_identity_at_most(card.color_identity, state.colors):
+        if not matches_color_identity(
+            card.color_identity, state.colors, state.color_mode
+        ):
             return False
     if state.rarity_filter_active:
         if not matches_rarity(card.rarities, state.rarities):

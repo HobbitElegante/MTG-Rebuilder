@@ -1,0 +1,8 @@
+Mana and cost symbols are SVG assets from Scryfall
+(https://svgs.scryfall.io/card-symbols/).
+
+Shipped set (tier B): W U B R G C, 0–15, X.
+
+Used under the Wizards Fan Content Policy / Scryfall API guidelines.
+Scryfall is not affiliated with or endorsed by this application.
+Data and imagery © Wizards of the Coast / Scryfall as applicable.

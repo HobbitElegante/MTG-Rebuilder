@@ -7,6 +7,9 @@ directory to `mtg_rebuilder/resources`).
 
 from pathlib import Path
 
-APP_ICON = Path(__file__).resolve().parent / "app_icon.png"
+_RESOURCES = Path(__file__).resolve().parent
 
-__all__ = ["APP_ICON"]
+APP_ICON = _RESOURCES / "app_icon.png"
+CARD_SYMBOLS_DIR = _RESOURCES / "card-symbols"
+
+__all__ = ["APP_ICON", "CARD_SYMBOLS_DIR"]

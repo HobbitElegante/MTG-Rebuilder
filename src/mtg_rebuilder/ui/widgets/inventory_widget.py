@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QShowEvent
+from PySide6.QtGui import QIcon, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from mtg_rebuilder.algorithms.inventory_filters import (
+    FilterChip,
     filter_inventory_cards,
     subtype_catalog,
 )
@@ -48,11 +49,14 @@ from mtg_rebuilder.ui.error_text import format_deck_url_error
 from mtg_rebuilder.ui.inventory_display import (
     format_color_identity,
     format_edition_summary,
+    format_filter_button_label,
+    format_filter_chips,
     format_inventory_decks,
     format_mana_value,
     format_rarity_summary,
     rarity_sort_rank,
 )
+from mtg_rebuilder.ui.mana_icons import color_identity_pixmap
 from mtg_rebuilder.ui.scryfall_icon import scryfall_icon
 from mtg_rebuilder.ui.widgets.card_preview import (
     CardPreviewPanel,
@@ -60,6 +64,7 @@ from mtg_rebuilder.ui.widgets.card_preview import (
     build_preview_splitter,
     card_images_enabled,
 )
+from mtg_rebuilder.ui.widgets.chip_bar import Chip, ChipBar
 from mtg_rebuilder.ui.widgets.edition_picker import CopyEditionTable, EditionComboBox
 from mtg_rebuilder.ui.widgets.import_dialogs import AddInventoryListDialog, QuantityStepper
 from mtg_rebuilder.ui.widgets.inventory_card_details import InventoryCardDetails
@@ -510,9 +515,19 @@ class InventoryWidget(QWidget):
         self._filter_dialog = InventoryFilterDialog(self._translator, self)
         self._filter_dialog.filters_changed.connect(self._on_filters_changed)
 
+        # Active filters as chips, so they can be read and dropped without
+        # reopening the dialog.
+        self._filter_chips = ChipBar()
+        self._filter_chips.chip_removed.connect(self._on_filter_chip_removed)
+        self._filter_chips.cleared.connect(self._filter_dialog.clear_filters)
+        self._filter_chips.setVisible(False)
+        collection.addWidget(self._filter_chips)
+
         self._table = QTableWidget(0, 9)
         self._table.setHorizontalHeaderLabels(self._header_labels())
         self._apply_header_tooltips()
+        # Wide enough for five WUBRG pips side-by-side in the Colors column.
+        self._table.setIconSize(QSize(74, 14))
         self._table.setColumnHidden(COL_EDITION, not self._track_editions)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = self._table.horizontalHeader()
@@ -530,7 +545,7 @@ class InventoryWidget(QWidget):
         header.setSectionResizeMode(COL_DECKS, QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(60)
         header.resizeSection(COL_CMC, 56)
-        header.resizeSection(COL_COLOR, 72)
+        header.resizeSection(COL_COLOR, 88)
         header.resizeSection(COL_RARITY, 56)
         header.resizeSection(COL_EDITION, 110)
         header.resizeSection(COL_TOTAL, 64)
@@ -564,8 +579,11 @@ class InventoryWidget(QWidget):
         self._preview_column.setMinimumWidth(PREVIEW_MIN_WIDTH)
         self._preview_column.setVisible(self._show_card_images)
 
+        # Stretch 1 so the leftover height lands here: without it Qt splits it
+        # between the splitter and the chip bar (Minimum policy = may grow),
+        # leaving a tall empty band under the chips whenever a filter is active.
         collection.addWidget(
-            build_preview_splitter(self._view_stack, self._preview_column)
+            build_preview_splitter(self._view_stack, self._preview_column), 1
         )
 
         self._main_layout.addWidget(self._collection_panel, 1)
@@ -808,11 +826,29 @@ class InventoryWidget(QWidget):
         self._update_filter_button()
         self._populate_table()
 
+    def _on_filter_chip_removed(self, key: object) -> None:
+        if isinstance(key, FilterChip):
+            self._filter_dialog.remove_chip(key)
+
     def _update_filter_button(self) -> None:
-        label = self._translator.t("inventory.filters.toggle")
-        if self._filter_dialog.filter_state().is_active:
-            label = self._translator.t("inventory.filters.toggle_active")
-        self._filter_button.setText(label)
+        state = self._filter_dialog.filter_state()
+        self._filter_button.setText(
+            format_filter_button_label(state, self._translator)
+        )
+        self._filter_chips.set_texts(
+            remove_tooltip=self._translator.t("inventory.filters.chip_remove_tip"),
+            clear_text=self._translator.t("inventory.filters.chips_clear"),
+        )
+        self._filter_chips.set_chips(
+            [
+                Chip(key=chip, label=label)
+                for chip, label in format_filter_chips(
+                    state,
+                    self._translator,
+                    self._filter_dialog.selected_deck_names(),
+                )
+            ]
+        )
 
     def _update_image_view_button(self) -> None:
         key = (
@@ -1089,9 +1125,6 @@ class InventoryWidget(QWidget):
             for index, row in enumerate(rows):
                 assigned = row.total_copies - row.free_copies
                 decks_text = format_inventory_decks(row, self._translator)
-                color_text = format_color_identity(
-                    row.color_identity, self._translator
-                )
 
                 name_item = QTableWidgetItem(row.card_name)
                 name_item.setData(ORACLE_ID_ROLE, row.oracle_id)
@@ -1103,7 +1136,16 @@ class InventoryWidget(QWidget):
                 cmc_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 cmc_item.setFlags(cmc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-                color_item = QTableWidgetItem(color_text)
+                color_text = format_color_identity(
+                    row.color_identity, self._translator
+                )
+                color_pix = color_identity_pixmap(row.color_identity, size=14)
+                if color_pix is not None:
+                    color_item = QTableWidgetItem()
+                    color_item.setIcon(QIcon(color_pix))
+                    color_item.setToolTip(color_text)
+                else:
+                    color_item = QTableWidgetItem(color_text)
                 color_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 color_item.setFlags(
                     color_item.flags() & ~Qt.ItemFlag.ItemIsEditable

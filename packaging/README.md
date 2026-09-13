@@ -2,7 +2,7 @@
 
 Build portable binaries with **PyInstaller** (`onedir`). Linux wraps the folder in an **AppImage**. Windows produces `dist/MTG-Rebuilder/MTG-Rebuilder.exe` and zips it for distribution.
 
-**Version / tag:** **`1.1.1`** — published at `4b73603` (Inventory Image view fixes, keyboard navigation, loading placeholders); `/releases/latest` already serves that AppImage + Windows zip. Unreleased on `main` since then: Qt window icon, Inventory filter dialog rework (subtypes, free-copies filter). Bump the version here and in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` before the next tag. Test count before tagging: `uv run pytest` (currently **329**).
+**Version / tag:** **`1.1.1`** — published at `4b73603` (Inventory Image view fixes, keyboard navigation, loading placeholders); `/releases/latest` already serves that AppImage + Windows zip. Unreleased on `main` since then: Qt window icon, Inventory filter dialog rework (subtypes, free-copies filter), filter chips + counter, color match modes and colorless, CMC duplicate/impossible guards, Scryfall mana symbols (tier B). Bump the version here and in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` before the next tag. Test count before tagging: `uv run pytest` (currently **384**).
 
 Published builds appear on the repository **Releases** page when a version tag is pushed.
 
@@ -102,7 +102,8 @@ Known headless pitfalls already handled in `.github/workflows/release.yml`:
 
 - Do **not** install `pytest-qt` in the test job (it auto-loads Qt). Entry point name is `pytest-qt` (hyphen), not `pytestqt`.
 - `ui/__init__.py` must stay lazy so formatter tests do not import PySide6.
-- Layout helpers for Inventory image view live in `ui/inventory_image_layout.py` (no Qt). Widget tests for the grid (`tests/test_inventory_image_grid_widget.py`) run locally with `QT_QPA_PLATFORM=offscreen` and skip on the runner. The filter-dialog tests (`tests/test_inventory_filter_dialog_widget.py`) follow the same rule. Guard them with an explicit `try/except ImportError` + `pytest.skip(..., allow_module_level=True)`, **not** `pytest.importorskip`: PySide6 *is* installed on the runner and fails with a plain `ImportError: libEGL.so.1`, while `importorskip` only catches `ModuleNotFoundError` since pytest 9.1.
+- Layout helpers for Inventory image view live in `ui/inventory_image_layout.py` (no Qt); the same goes for `ui/inventory_display.py` (chip labels, button counter) and `ui/filter_picker.py` (picker resolution). Widget tests for the grid (`tests/test_inventory_image_grid_widget.py`) run locally with `QT_QPA_PLATFORM=offscreen` and skip on the runner. The filter-dialog and chip-bar tests (`tests/test_inventory_filter_dialog_widget.py`, `tests/test_chip_bar_widget.py`) follow the same rule. Guard them with an explicit `try/except ImportError` + `pytest.skip(..., allow_module_level=True)`, **not** `pytest.importorskip`: PySide6 *is* installed on the runner and fails with a plain `ImportError: libEGL.so.1`, while `importorskip` only catches `ModuleNotFoundError` since pytest 9.1.
+- To rehearse the runner locally, shadow PySide6 with a stub that raises `ImportError` and disable the plugin that auto-loads Qt: `PYTHONPATH=/tmp/noqt uv run pytest -q -p no:pytest-qt` (expect the widget modules to skip, not error).
 - Linux build needs system libs (`libegl1`, …) because PyInstaller imports PySide6.
 
 ### Prerequisite

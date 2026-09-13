@@ -42,7 +42,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Ignored filters [{filters}]: require an internet connection"
         ),
         "inventory.filters.toggle": "Filter",
-        "inventory.filters.toggle_active": "Filter ✓",
+        "inventory.filters.toggle_count": "Filter ({count})",
         "inventory.view.images": "Image view",
         "inventory.view.images_active": "Image view ✓",
         "inventory.view.sort_by": "Sort by",
@@ -71,7 +71,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.filters.subtypes_search": "Find a subtype (Elf, Aura…)",
         "inventory.filters.subtypes_selected": "Selected subtypes",
         "inventory.filters.subtypes_add": "Add",
-        "inventory.filters.subtypes_remove": "Remove",
         "inventory.filters.decks": "Armed decks",
         "inventory.filters.decks_hint": (
             "Hide cards with a physical copy assigned to armed decks. "
@@ -81,11 +80,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.filters.decks_search": "Find an armed deck…",
         "inventory.filters.decks_selected": "Excluded decks",
         "inventory.filters.decks_add": "Add",
-        "inventory.filters.decks_remove": "Remove",
+        "inventory.filters.picker_no_match": "Nothing matches “{text}”.",
+        "inventory.filters.picker_ambiguous": (
+            "Several options match “{text}” — keep typing."
+        ),
+        "inventory.filters.picker_already": "“{name}” is already on the list.",
         "inventory.filters.colors": "Color identity",
         "inventory.filters.colors_hint": (
-            "At most these colors (like id≤). Leave empty or check all five for no filter."
+            "Compare the checked letters as at most (id≤), exactly, or at least. "
+            "No letters means no filter, so cards with no color at all need the "
+            "colorless switch."
         ),
+        "inventory.filters.colors_mode": "Match",
+        "inventory.filters.colors_mode.at_most": "At most these colors (id≤)",
+        "inventory.filters.colors_mode.exact": "Exactly these colors (id=)",
+        "inventory.filters.colors_mode.at_least": "At least these colors (id≥)",
+        "inventory.filters.colors_colorless": "Only colorless cards",
         "inventory.filters.color.W": "W: White",
         "inventory.filters.color.U": "U: Blue",
         "inventory.filters.color.B": "B: Black",
@@ -106,7 +116,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "inventory.filters.cmc_add": "Add",
         "inventory.filters.cmc_remove": "Remove",
+        "inventory.filters.cmc_duplicate": (
+            "“MV {op} {value}” is already on the list."
+        ),
+        "inventory.filters.cmc_conflict": (
+            "“MV {op} {value}” would match no cards with the other conditions."
+        ),
+        "inventory.filters.cmc_duplicates": (
+            "Duplicate mana-value conditions; remove one."
+        ),
+        "inventory.filters.cmc_impossible": (
+            "These mana-value conditions match no cards."
+        ),
         "inventory.filters.clear": "Clear filters",
+        "inventory.filters.chip_remove_tip": "Remove this filter",
+        "inventory.filters.chips_clear": "Clear all",
+        "inventory.filters.chip.only_free": "With free copies",
+        "inventory.filters.chip.type": "Type: {name}",
+        "inventory.filters.chip.subtype": "Subtype: {name}",
+        "inventory.filters.chip.any_armed": "Not in armed decks",
+        "inventory.filters.chip.deck": "Not in: {name}",
+        "inventory.filters.chip.colors_at_most": "Colors ≤ {colors}",
+        "inventory.filters.chip.colors_exact": "Colors = {colors}",
+        "inventory.filters.chip.colors_at_least": "Colors ≥ {colors}",
+        "inventory.filters.chip.colorless": "Colorless",
+        "inventory.filters.chip.rarity": "Rarity: {codes}",
+        "inventory.filters.chip.cmc": "MV {op} {value}",
         "inventory.add_new": "Add new card to collection",
         "inventory.add_list": "Add list to collection",
         "inventory.add_list.title": "Add list to collection",
@@ -636,7 +671,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Image download saves Scryfall normal JPEGs under data/images/ "
             "(collection or full cache). "
             "Refresh Commander legalities updates format status for cards you "
-            "own or have on deck lists (faster than a full bulk sync)."
+            "own or have on deck lists (faster than a full bulk sync). "
+            "Mana symbols are Scryfall SVGs bundled with the app; Scryfall is "
+            "not affiliated with or endorsed by this software."
         ),
         "browse.scryfall.confirm_unique_title": "Use unique-artwork?",
         "browse.scryfall.confirm_unique_body": (
@@ -692,7 +729,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Se ignoraron los filtros [{filters}]: requieren conexión a internet"
         ),
         "inventory.filters.toggle": "Filtrar",
-        "inventory.filters.toggle_active": "Filtrar ✓",
+        "inventory.filters.toggle_count": "Filtrar ({count})",
         "inventory.view.images": "Vista imágenes",
         "inventory.view.images_active": "Vista imágenes ✓",
         "inventory.view.sort_by": "Ordenar por",
@@ -721,7 +758,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.filters.subtypes_search": "Buscar un subtipo (Elf, Aura…)",
         "inventory.filters.subtypes_selected": "Subtipos seleccionados",
         "inventory.filters.subtypes_add": "Añadir",
-        "inventory.filters.subtypes_remove": "Quitar",
         "inventory.filters.decks": "Mazos armados",
         "inventory.filters.decks_hint": (
             "Oculta cartas con una copia física asignada a mazos armados. "
@@ -731,11 +767,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.filters.decks_search": "Buscar un mazo armado…",
         "inventory.filters.decks_selected": "Mazos excluidos",
         "inventory.filters.decks_add": "Añadir",
-        "inventory.filters.decks_remove": "Quitar",
+        "inventory.filters.picker_no_match": "Nada coincide con «{text}».",
+        "inventory.filters.picker_ambiguous": (
+            "Varias opciones coinciden con «{text}»: seguí escribiendo."
+        ),
+        "inventory.filters.picker_already": "«{name}» ya está en la lista.",
         "inventory.filters.colors": "Identidad de color",
         "inventory.filters.colors_hint": (
-            "Como máximo estos colores (como id≤). Vacío o los cinco = sin filtro."
+            "Compara las letras marcadas como máximo (id≤), exacto o al menos. "
+            "Sin letras no hay filtro, así que las cartas sin ningún color "
+            "necesitan el interruptor de incoloras."
         ),
+        "inventory.filters.colors_mode": "Coincidencia",
+        "inventory.filters.colors_mode.at_most": "Como máximo estos colores (id≤)",
+        "inventory.filters.colors_mode.exact": "Exactamente estos colores (id=)",
+        "inventory.filters.colors_mode.at_least": "Al menos estos colores (id≥)",
+        "inventory.filters.colors_colorless": "Solo cartas incoloras",
         "inventory.filters.color.W": "W: Blanco",
         "inventory.filters.color.U": "U: Azul",
         "inventory.filters.color.B": "B: Negro",
@@ -756,7 +803,32 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "inventory.filters.cmc_add": "Añadir",
         "inventory.filters.cmc_remove": "Quitar",
+        "inventory.filters.cmc_duplicate": (
+            "«VM {op} {value}» ya está en la lista."
+        ),
+        "inventory.filters.cmc_conflict": (
+            "«VM {op} {value}» no coincidiría con ninguna carta junto a las otras condiciones."
+        ),
+        "inventory.filters.cmc_duplicates": (
+            "Hay condiciones de valor de maná duplicadas; quita una."
+        ),
+        "inventory.filters.cmc_impossible": (
+            "Estas condiciones de valor de maná no coinciden con ninguna carta."
+        ),
         "inventory.filters.clear": "Limpiar filtros",
+        "inventory.filters.chip_remove_tip": "Quitar este filtro",
+        "inventory.filters.chips_clear": "Limpiar todo",
+        "inventory.filters.chip.only_free": "Con copias libres",
+        "inventory.filters.chip.type": "Tipo: {name}",
+        "inventory.filters.chip.subtype": "Subtipo: {name}",
+        "inventory.filters.chip.any_armed": "Fuera de mazos armados",
+        "inventory.filters.chip.deck": "Fuera de: {name}",
+        "inventory.filters.chip.colors_at_most": "Colores ≤ {colors}",
+        "inventory.filters.chip.colors_exact": "Colores = {colors}",
+        "inventory.filters.chip.colors_at_least": "Colores ≥ {colors}",
+        "inventory.filters.chip.colorless": "Incoloras",
+        "inventory.filters.chip.rarity": "Rareza: {codes}",
+        "inventory.filters.chip.cmc": "VM {op} {value}",
         "inventory.add_new": "Agregar carta nueva a la colección",
         "inventory.add_list": "Agregar listado a la colección",
         "inventory.add_list.title": "Agregar listado a la colección",
@@ -1293,7 +1365,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "data/images/ (colección o caché completo). "
             "Actualizar legalidades Commander refresca el estado de formato de "
             "las cartas que tienes o están en listados (más rápido que un sync "
-            "bulk completo)."
+            "bulk completo). "
+            "Los símbolos de maná son SVG de Scryfall incluidos en la app; "
+            "Scryfall no está afiliado ni respalda este software."
         ),
         "browse.scryfall.confirm_unique_title": "¿Usar unique-artwork?",
         "browse.scryfall.confirm_unique_body": (

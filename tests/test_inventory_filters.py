@@ -1,14 +1,28 @@
 """Tests for inventory panel filters (type / subtype / colors / rarity / CMC / decks)."""
 
 from mtg_rebuilder.algorithms.inventory_filters import (
+    CmcAddStatus,
     CmcCondition,
+    CmcSetIssue,
+    ColorMode,
+    FilterChip,
+    FilterChipKind,
     InventoryFilterState,
+    active_filter_count,
+    cmc_conditions_issue,
+    cmc_conditions_satisfiable,
+    filter_chips,
     filter_inventory_cards,
+    matches_color_identity_at_least,
     matches_color_identity_at_most,
+    matches_color_identity_exact,
     matches_panel_filters,
     matches_rarity,
     matches_subtypes,
     matches_type_line,
+    resolve_cmc_add,
+    sorted_color_letters,
+    sorted_rarity_codes,
     subtype_catalog,
     subtypes_of,
 )
@@ -66,6 +80,86 @@ def test_color_filter_inactive_when_empty_or_all_five() -> None:
         colors=frozenset("WUBRG")
     ).color_filter_active
     assert InventoryFilterState(colors=frozenset({"R", "B"})).color_filter_active
+
+
+def test_color_exact_needs_the_whole_identity() -> None:
+    wanted = frozenset({"R", "B"})
+    assert matches_color_identity_exact("RB", wanted)
+    assert matches_color_identity_exact("BR", wanted)
+    assert not matches_color_identity_exact("R", wanted)
+    assert not matches_color_identity_exact("RBG", wanted)
+    assert matches_color_identity_exact(None, frozenset())
+
+
+def test_color_at_least_allows_extra_colors() -> None:
+    required = frozenset({"R"})
+    assert matches_color_identity_at_least("R", required)
+    assert matches_color_identity_at_least("RG", required)
+    assert not matches_color_identity_at_least("G", required)
+    assert not matches_color_identity_at_least(None, required)
+
+
+def test_all_five_still_filters_in_exact_and_at_least_modes() -> None:
+    """Only "at most" is a no-op with the five letters checked."""
+    five = frozenset("WUBRG")
+    assert not InventoryFilterState(
+        colors=five, color_mode=ColorMode.AT_MOST
+    ).color_filter_active
+    assert InventoryFilterState(
+        colors=five, color_mode=ColorMode.EXACT
+    ).color_filter_active
+    assert InventoryFilterState(
+        colors=five, color_mode=ColorMode.AT_LEAST
+    ).color_filter_active
+
+
+def test_panel_filter_honours_the_color_mode() -> None:
+    mono = _row(name="Bolt", oracle_id="bolt", color_identity="R")
+    gruul = _row(name="Gruul", oracle_id="gruul", color_identity="RG")
+    selected = frozenset({"R"})
+
+    at_most = InventoryFilterState(colors=selected, color_mode=ColorMode.AT_MOST)
+    assert matches_panel_filters(mono, at_most)
+    assert not matches_panel_filters(gruul, at_most)
+
+    exact = InventoryFilterState(colors=selected, color_mode=ColorMode.EXACT)
+    assert matches_panel_filters(mono, exact)
+    assert not matches_panel_filters(gruul, exact)
+
+    at_least = InventoryFilterState(colors=selected, color_mode=ColorMode.AT_LEAST)
+    assert matches_panel_filters(mono, at_least)
+    assert matches_panel_filters(gruul, at_least)
+
+
+def test_only_colorless_reaches_the_empty_identity() -> None:
+    """The unreachable state before: zero checkboxes meant "no filter"."""
+    artifact = _row(name="Sol Ring", oracle_id="sol", color_identity=None)
+    empty_string = _row(name="Wastes", oracle_id="wastes", color_identity="")
+    red = _row(name="Bolt", oracle_id="bolt", color_identity="R")
+    state = InventoryFilterState(only_colorless=True)
+
+    assert matches_panel_filters(artifact, state)
+    assert matches_panel_filters(empty_string, state)
+    assert not matches_panel_filters(red, state)
+    assert state.is_active
+
+
+def test_only_colorless_overrides_the_letter_selection() -> None:
+    red = _row(color_identity="R")
+    colorless = _row(name="Sol Ring", oracle_id="sol", color_identity=None)
+    state = InventoryFilterState(
+        colors=frozenset({"R"}),
+        color_mode=ColorMode.AT_LEAST,
+        only_colorless=True,
+    )
+    assert not state.color_filter_active
+    assert not matches_panel_filters(red, state)
+    assert matches_panel_filters(colorless, state)
+
+
+def test_letters_and_rarity_codes_are_sorted_for_labels() -> None:
+    assert sorted_color_letters(frozenset({"G", "W", "B"})) == ("W", "B", "G")
+    assert sorted_rarity_codes(frozenset({"M", "C"})) == ("C", "M")
 
 
 def test_type_match_is_or_across_selected() -> None:
@@ -148,6 +242,43 @@ def test_cmc_multiple_conditions_and() -> None:
     assert matches_panel_filters(bolt, state)
     assert not matches_panel_filters(
         _row(name="Big", oracle_id="big", cmc=5), state
+    )
+
+
+def test_cmc_satisfiable_detects_empty_and_impossible_sets() -> None:
+    assert cmc_conditions_satisfiable(())
+    assert cmc_conditions_satisfiable((CmcCondition("=", 1),))
+    assert cmc_conditions_satisfiable(
+        (CmcCondition(">=", 1), CmcCondition("<=", 3))
+    )
+    assert not cmc_conditions_satisfiable(
+        (CmcCondition("=", 1), CmcCondition("=", 3))
+    )
+    assert not cmc_conditions_satisfiable(
+        (CmcCondition(">", 5), CmcCondition("<", 3))
+    )
+    assert not cmc_conditions_satisfiable(
+        (CmcCondition("=", 2), CmcCondition("!=", 2))
+    )
+
+
+def test_resolve_cmc_add_blocks_duplicates_and_conflicts() -> None:
+    existing = (CmcCondition("=", 1),)
+    assert resolve_cmc_add(existing, "=", 1).status is CmcAddStatus.DUPLICATE
+    assert resolve_cmc_add(existing, "=", 3).status is CmcAddStatus.CONFLICT
+    assert resolve_cmc_add(existing, ">=", 0).status is CmcAddStatus.OK
+    assert resolve_cmc_add((), "=", 1).can_add
+
+
+def test_cmc_conditions_issue_prefers_duplicate_over_ok() -> None:
+    assert cmc_conditions_issue(()) is CmcSetIssue.NONE
+    assert (
+        cmc_conditions_issue((CmcCondition(">=", 2), CmcCondition(">=", 2)))
+        is CmcSetIssue.DUPLICATE
+    )
+    assert (
+        cmc_conditions_issue((CmcCondition("=", 1), CmcCondition("=", 3)))
+        is CmcSetIssue.IMPOSSIBLE
     )
 
 
@@ -246,6 +377,61 @@ def test_rarity_match_is_or_across_selected() -> None:
     assert not matches_rarity(frozenset({"common"}), frozenset({"R", "M"}))
     assert not matches_rarity(frozenset(), frozenset({"C"}))
     assert not matches_rarity(frozenset({"special"}), frozenset({"R"}))
+
+
+def test_no_chips_when_nothing_is_active() -> None:
+    assert filter_chips(InventoryFilterState()) == ()
+    assert active_filter_count(InventoryFilterState()) == 0
+
+
+def test_chips_follow_dialog_order_and_split_by_item() -> None:
+    state = InventoryFilterState(
+        only_with_free=True,
+        types=frozenset({"Land", "Creature"}),
+        subtypes=frozenset({"Elf"}),
+        exclude_any_armed=True,
+        exclude_deck_ids=frozenset({4, 2}),
+        colors=frozenset({"R"}),
+        rarities=frozenset({"M"}),
+        cmc_conditions=(CmcCondition("=", 1), CmcCondition(">", 3)),
+    )
+    assert filter_chips(state) == (
+        FilterChip(FilterChipKind.ONLY_FREE),
+        FilterChip(FilterChipKind.TYPE, "Creature"),
+        FilterChip(FilterChipKind.TYPE, "Land"),
+        FilterChip(FilterChipKind.SUBTYPE, "Elf"),
+        FilterChip(FilterChipKind.ANY_ARMED),
+        FilterChip(FilterChipKind.DECK, "2"),
+        FilterChip(FilterChipKind.DECK, "4"),
+        FilterChip(FilterChipKind.COLORS),
+        FilterChip(FilterChipKind.RARITY),
+        FilterChip(FilterChipKind.CMC, "0"),
+        FilterChip(FilterChipKind.CMC, "1"),
+    )
+    assert active_filter_count(state) == 11
+
+
+def test_colorless_and_letters_never_produce_two_color_chips() -> None:
+    colorless = InventoryFilterState(
+        colors=frozenset({"R"}), only_colorless=True
+    )
+    assert filter_chips(colorless) == (FilterChip(FilterChipKind.COLORLESS),)
+
+
+def test_chip_count_agrees_with_is_active() -> None:
+    """The button counter and the ✓ it replaced must never disagree."""
+    states = [
+        InventoryFilterState(),
+        InventoryFilterState(colors=frozenset("WUBRG")),
+        InventoryFilterState(rarities=frozenset("CURM")),
+        InventoryFilterState(only_colorless=True),
+        InventoryFilterState(types=frozenset({"Land"})),
+        InventoryFilterState(
+            colors=frozenset("WUBRG"), color_mode=ColorMode.EXACT
+        ),
+    ]
+    for state in states:
+        assert bool(active_filter_count(state)) is state.is_active
 
 
 def test_rarity_panel_filter() -> None:

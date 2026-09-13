@@ -1,6 +1,19 @@
 from mtg_rebuilder.algorithms.card_utils import is_commander_legality_issue
 from mtg_rebuilder.algorithms.commander_rules import CommanderRuleIssue, CommanderRuleKind
-from mtg_rebuilder.algorithms.inventory_filters import RARITY_BY_CODE
+from mtg_rebuilder.algorithms.inventory_filters import (
+    RARITY_BY_CODE,
+    CmcAddResolution,
+    CmcAddStatus,
+    CmcSetIssue,
+    ColorMode,
+    FilterChip,
+    FilterChipKind,
+    InventoryFilterState,
+    active_filter_count,
+    filter_chips,
+    sorted_color_letters,
+    sorted_rarity_codes,
+)
 from mtg_rebuilder.config import UNSPECIFIED_EDITION_LABEL
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
@@ -146,6 +159,97 @@ def format_availability_status(row: InventorySummaryRow, translator: Translator)
     if row.free_copies > 0:
         return translator.t("inventory.status.available").format(count=row.free_copies)
     return translator.t("inventory.status.unavailable").format(count=row.total_copies)
+
+
+_COLOR_MODE_CHIP_KEY: dict[ColorMode, str] = {
+    ColorMode.AT_MOST: "inventory.filters.chip.colors_at_most",
+    ColorMode.EXACT: "inventory.filters.chip.colors_exact",
+    ColorMode.AT_LEAST: "inventory.filters.chip.colors_at_least",
+}
+
+
+def format_filter_button_label(
+    state: InventoryFilterState, translator: Translator
+) -> str:
+    """``Filter`` when idle, ``Filter (3)`` when three filters are on."""
+    count = active_filter_count(state)
+    if not count:
+        return translator.t("inventory.filters.toggle")
+    return translator.t("inventory.filters.toggle_count").format(count=count)
+
+
+def format_cmc_hint(
+    add: CmcAddResolution,
+    set_issue: CmcSetIssue,
+    op: str,
+    value: float,
+    translator: Translator,
+) -> str:
+    """Why CMC *Add* is disabled, or a warning about the committed rows."""
+    display = int(value) if float(value).is_integer() else value
+    if add.status is CmcAddStatus.DUPLICATE:
+        return translator.t("inventory.filters.cmc_duplicate").format(
+            op=op, value=display
+        )
+    if add.status is CmcAddStatus.CONFLICT:
+        return translator.t("inventory.filters.cmc_conflict").format(
+            op=op, value=display
+        )
+    if set_issue is CmcSetIssue.DUPLICATE:
+        return translator.t("inventory.filters.cmc_duplicates")
+    if set_issue is CmcSetIssue.IMPOSSIBLE:
+        return translator.t("inventory.filters.cmc_impossible")
+    return ""
+
+
+def format_filter_chip_label(
+    chip: FilterChip,
+    state: InventoryFilterState,
+    translator: Translator,
+    deck_names: dict[int, str] | None = None,
+) -> str:
+    t = translator.t
+    if chip.kind is FilterChipKind.ONLY_FREE:
+        return t("inventory.filters.chip.only_free")
+    if chip.kind is FilterChipKind.TYPE:
+        return t("inventory.filters.chip.type").format(name=chip.value)
+    if chip.kind is FilterChipKind.SUBTYPE:
+        return t("inventory.filters.chip.subtype").format(name=chip.value)
+    if chip.kind is FilterChipKind.ANY_ARMED:
+        return t("inventory.filters.chip.any_armed")
+    if chip.kind is FilterChipKind.DECK:
+        names = deck_names or {}
+        deck_id = int(chip.value)
+        return t("inventory.filters.chip.deck").format(
+            name=names.get(deck_id, chip.value)
+        )
+    if chip.kind is FilterChipKind.COLORLESS:
+        return t("inventory.filters.chip.colorless")
+    if chip.kind is FilterChipKind.COLORS:
+        key = _COLOR_MODE_CHIP_KEY.get(
+            state.color_mode, _COLOR_MODE_CHIP_KEY[ColorMode.AT_MOST]
+        )
+        return t(key).format(colors="".join(sorted_color_letters(state.colors)))
+    if chip.kind is FilterChipKind.RARITY:
+        return t("inventory.filters.chip.rarity").format(
+            codes=", ".join(sorted_rarity_codes(state.rarities))
+        )
+    condition = state.cmc_conditions[int(chip.value)]
+    return t("inventory.filters.chip.cmc").format(
+        op=condition.op, value=format_mana_value(condition.value, translator)
+    )
+
+
+def format_filter_chips(
+    state: InventoryFilterState,
+    translator: Translator,
+    deck_names: dict[int, str] | None = None,
+) -> list[tuple[FilterChip, str]]:
+    """Every active filter paired with its chip label, in dialog order."""
+    return [
+        (chip, format_filter_chip_label(chip, state, translator, deck_names))
+        for chip in filter_chips(state)
+    ]
 
 
 def format_commander_legality_label(legality: str, translator: Translator) -> str:

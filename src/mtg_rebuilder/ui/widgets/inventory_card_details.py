@@ -3,9 +3,11 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFormLayout, QLabel, QSizePolicy, QWidget
 
+from mtg_rebuilder.algorithms.mana_symbols import color_identity_codes
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
 from mtg_rebuilder.ui.inventory_display import format_inventory_detail_lines
+from mtg_rebuilder.ui.mana_icons import symbols_rich_html
 
 
 class InventoryCardDetails(QWidget):
@@ -50,14 +52,25 @@ class InventoryCardDetails(QWidget):
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._form.addRow(empty)
             return
+        color_label = self._translator.t("inventory.table.color")
         for label, value in format_inventory_detail_lines(
             self._row,
             self._translator,
             track_editions=self._track_editions,
         ):
-            value_label = QLabel(value)
+            value_label = QLabel()
             value_label.setWordWrap(True)
             value_label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
+            if label == color_label:
+                codes = color_identity_codes(self._row.color_identity)
+                if codes:
+                    value_label.setTextFormat(Qt.TextFormat.RichText)
+                    value_label.setText(symbols_rich_html(codes, size=14))
+                    value_label.setToolTip(value)
+                else:
+                    value_label.setText(value)
+            else:
+                value_label.setText(value)
             self._form.addRow(f"{label}:", value_label)
