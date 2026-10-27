@@ -506,6 +506,9 @@ class ImportService:
         commander_name: str | None = None,
     ) -> list[ImportWarning]:
         warnings: list[ImportWarning] = []
+        # One row per (oracle_id, role): reprints of the same card ("2 Island
+        # (FRA) 283" + "1 Island (FRA) 284") share an identity and must merge.
+        merged: dict[tuple[str, DeckCardRole], int] = {}
 
         for line in parsed_lines:
             # Tokens are unlimited / display-only elsewhere; never store on lists.
@@ -532,7 +535,11 @@ class ImportService:
             if commander_name and line.name.lower() == commander_name.lower():
                 role = DeckCardRole.COMMANDER
 
-            self._upsert_deck_card(deck_id, card.oracle_id, line.quantity, role)
+            key = (card.oracle_id, role)
+            merged[key] = merged.get(key, 0) + line.quantity
+
+        for (oracle_id, role), quantity in merged.items():
+            self._upsert_deck_card(deck_id, oracle_id, quantity, role)
 
         if commander_name:
             self._promote_commander(deck_id, commander_name)

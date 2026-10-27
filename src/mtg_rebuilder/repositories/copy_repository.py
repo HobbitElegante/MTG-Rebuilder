@@ -111,7 +111,22 @@ class CopyRepository:
             .where(CardCopy.card_id.in_(ids))
             .group_by(CardCopy.card_id)
         ).all()
-        return {card_id: count for card_id, count in rows}
+        return {card_id: int(count) for card_id, count in rows}
+
+    def free_counts_for(self, oracle_ids: Iterable[str]) -> dict[str, int]:
+        """Unassigned copy counts for the given oracle ids (one query)."""
+        ids = list(oracle_ids)
+        if not ids:
+            return {}
+        rows = self._session.execute(
+            select(CardCopy.card_id, func.count(CardCopy.id))
+            .where(
+                CardCopy.card_id.in_(ids),
+                CardCopy.id.not_in(self._assigned_copy_ids()),
+            )
+            .group_by(CardCopy.card_id)
+        ).all()
+        return {card_id: int(count) for card_id, count in rows}
 
     def list_free(self, oracle_id: str, *, limit: int | None = None) -> list[CardCopy]:
         query = (

@@ -1,9 +1,10 @@
+import time
 from pathlib import Path
 
+import httpx
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QShowEvent
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -31,7 +32,7 @@ from mtg_rebuilder.algorithms.inventory_filters import (
     filter_inventory_cards,
     subtype_catalog,
 )
-from mtg_rebuilder.api.scryfall_client import ScryfallClient
+from mtg_rebuilder.api.scryfall_client import ScryfallClient, ScryfallQueryError
 from mtg_rebuilder.database import get_session
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.models.enums import DeckStatus
@@ -59,7 +60,7 @@ from mtg_rebuilder.ui.inventory_display import (
     rarity_sort_rank,
 )
 from mtg_rebuilder.ui.mana_icons import color_identity_pixmap, mana_cost_pixmap
-from mtg_rebuilder.ui.scryfall_icon import scryfall_icon
+from mtg_rebuilder.ui.scryfall_icon import scryfall_icon, search_icon, stop_icon
 from mtg_rebuilder.ui.widgets.card_preview import (
     CardPreviewPanel,
     PREVIEW_MIN_WIDTH,
@@ -75,9 +76,16 @@ from mtg_rebuilder.ui.widgets.inventory_image_grid import InventoryImageGrid
 
 ORACLE_ID_ROLE = Qt.ItemDataRole.UserRole
 SEARCH_DEBOUNCE_MS = 350
-# Inventory Scryfall-syntax search (checkbox + logo). Hidden for now — local
-# Filter dialog covers type / id≤ / CMC. Flip to True to re-enable the UI.
-SCRYFALL_INVENTORY_SEARCH_ENABLED = False
+# Kill switch for the Scryfall-syntax search (logo + magnifier). Even when
+# True, the logo only shows after a successful reachability probe.
+SCRYFALL_INVENTORY_SEARCH_ENABLED = True
+# Re-probe at most this often (on tab show, and on a timer while visible).
+SCRYFALL_PING_INTERVAL_MS = 120_000
+SCRYFALL_BUTTON_ICON = 22
+
+SEARCH_FAIL_QUERY = "query"
+SEARCH_FAIL_NETWORK = "network"
+SEARCH_FAIL_OTHER = "other"
 
 MANA_SYMBOL_SIZE = 14
 # Eight symbols side-by-side covers every printed cost we care about; the strip
@@ -99,7 +107,8 @@ COLUMN_COUNT = 10
 
 class InventorySearchWorker(QThread):
     finished_ok = Signal(object, object)  # query_text, oracle_ids set
-    failed = Signal(object, object)  # query_text, error message
+    failed = Signal(object, object, object)  # query_text, kind, message
+    progress = Signal(int, int)  # page, total_pages
 
     def __init__(
         self,
@@ -115,15 +124,37 @@ class InventorySearchWorker(QThread):
     def run(self) -> None:
         client = ScryfallClient()
         try:
-            oracle_ids = client.search_oracle_ids_in(
-                self._query_text, self._inventory_ids, max_pages=15
+            result = client.search_oracle_ids_in(
+                self._query_text,
+                self._inventory_ids,
+                on_page=self.progress.emit,
+                should_stop=self.isInterruptionRequested,
             )
-            if self.isInterruptionRequested():
+            if result.cancelled or self.isInterruptionRequested():
                 return
-            self.finished_ok.emit(self._query_text, oracle_ids)
+            self.finished_ok.emit(self._query_text, result.oracle_ids)
+        except ScryfallQueryError as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(self._query_text, SEARCH_FAIL_QUERY, str(exc))
+        except httpx.TransportError as exc:
+            if not self.isInterruptionRequested():
+                self.failed.emit(self._query_text, SEARCH_FAIL_NETWORK, str(exc))
         except Exception as exc:
             if not self.isInterruptionRequested():
-                self.failed.emit(self._query_text, str(exc))
+                self.failed.emit(self._query_text, SEARCH_FAIL_OTHER, str(exc))
+        finally:
+            client.close()
+
+
+class ScryfallPingWorker(QThread):
+    """Reachability probe that decides whether the Scryfall logo is shown."""
+
+    result = Signal(bool)
+
+    def run(self) -> None:
+        client = ScryfallClient()
+        try:
+            self.result.emit(client.ping())
         finally:
             client.close()
 
@@ -346,8 +377,12 @@ class InventoryWidget(QWidget):
         self._scryfall_oracle_ids: set[str] | None = None
         self._scryfall_query_applied: str = ""
         self._scryfall_busy = False
+        self._scryfall_progress: tuple[int, int] | None = None
+        self._scryfall_notice = ""
         self._search_generation = 0
-        self._ignore_scryfall_button = False
+        self._scryfall_online = False
+        self._ping_worker: ScryfallPingWorker | None = None
+        self._last_ping_at: float | None = None
         with get_session() as session:
             settings = SettingsService(session)
             self._show_card_images = settings.get_show_card_images()
@@ -358,6 +393,9 @@ class InventoryWidget(QWidget):
         self._search_timer.timeout.connect(self._populate_table)
         self._needs_reload = False
         self._image_view_active = False
+        self._ping_timer = QTimer(self)
+        self._ping_timer.setInterval(SCRYFALL_PING_INTERVAL_MS)
+        self._ping_timer.timeout.connect(self._on_ping_timer)
         self._build_ui()
         self.refresh()
 
@@ -365,6 +403,13 @@ class InventoryWidget(QWidget):
         super().showEvent(event)
         if self._needs_reload:
             self._reload()
+        if SCRYFALL_INVENTORY_SEARCH_ENABLED:
+            self._check_scryfall_online()
+            self._ping_timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().hideEvent(event)
+        self._ping_timer.stop()
 
     def set_show_card_images(self, enabled: bool) -> None:
         self._show_card_images = enabled
@@ -392,15 +437,11 @@ class InventoryWidget(QWidget):
         self._retranslate_image_sort()
         self._filter_dialog.retranslate()
         if SCRYFALL_INVENTORY_SEARCH_ENABLED:
-            self._scryfall_mode.setText(
-                self._translator.t("inventory.search.scryfall_mode")
-            )
-            self._scryfall_mode.setToolTip(
+            self._scryfall_toggle.setToolTip(
                 self._translator.t("inventory.search.scryfall_mode_tip")
             )
-            self._scryfall_button.setToolTip(
-                self._translator.t("inventory.search.scryfall_run")
-            )
+            self._sync_scryfall_controls()
+            self._update_search_hint()
         self._add_button.setText(self._translator.t("inventory.add_new"))
         self._add_list_button.setText(self._translator.t("inventory.add_list"))
         self._edit_button.setText(self._translator.t("inventory.edit_copies"))
@@ -454,28 +495,32 @@ class InventoryWidget(QWidget):
         search_row = QHBoxLayout()
         self._search = QLineEdit()
         self._search.textChanged.connect(self._on_search_text_changed)
+        self._search.returnPressed.connect(self._on_search_return)
         search_row.addWidget(self._search, 1)
 
-        # Checkbox before the run button so enabling the button mid-click
-        # cannot steal the mouse release (layout-shift click-through).
-        self._scryfall_mode = QCheckBox()
-        self._scryfall_mode.toggled.connect(self._on_scryfall_mode_toggled)
-        search_row.addWidget(self._scryfall_mode)
+        # Magnifier left of the logo: appears only in Scryfall mode, so the
+        # logo keeps its spot at the right edge and never jumps under the mouse.
+        self._scryfall_run = QToolButton()
+        self._scryfall_run.setIcon(search_icon(SCRYFALL_BUTTON_ICON))
+        self._scryfall_run.setIconSize(QSize(SCRYFALL_BUTTON_ICON, SCRYFALL_BUTTON_ICON))
+        self._scryfall_run.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._scryfall_run.clicked.connect(self._on_scryfall_run_clicked)
+        self._scryfall_run.hide()
+        search_row.addWidget(self._scryfall_run)
 
-        self._scryfall_button = QToolButton()
-        # Warm both variants so the first checkbox toggle never paints.
-        scryfall_icon(22, active=False)
-        scryfall_icon(22, active=True)
-        self._scryfall_button.setIcon(scryfall_icon(22, active=False))
-        self._scryfall_button.setIconSize(QSize(28, 28))
-        self._scryfall_button.setAutoRaise(True)
-        self._scryfall_button.setEnabled(False)
-        self._scryfall_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._scryfall_button.clicked.connect(self._run_scryfall_search)
-        search_row.addWidget(self._scryfall_button)
-        if not SCRYFALL_INVENTORY_SEARCH_ENABLED:
-            self._scryfall_mode.hide()
-            self._scryfall_button.hide()
+        self._scryfall_toggle = QToolButton()
+        self._scryfall_toggle.setCheckable(True)
+        # Warm both variants so the first toggle never paints.
+        scryfall_icon(SCRYFALL_BUTTON_ICON, active=False)
+        scryfall_icon(SCRYFALL_BUTTON_ICON, active=True)
+        self._scryfall_toggle.setIcon(scryfall_icon(SCRYFALL_BUTTON_ICON, active=False))
+        self._scryfall_toggle.setIconSize(QSize(28, 28))
+        self._scryfall_toggle.setAutoRaise(True)
+        self._scryfall_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._scryfall_toggle.toggled.connect(self._on_scryfall_mode_toggled)
+        # Hidden until a probe confirms Scryfall is reachable.
+        self._scryfall_toggle.hide()
+        search_row.addWidget(self._scryfall_toggle)
         collection.addLayout(search_row)
 
         self._search_hint = QLabel("")
@@ -803,29 +848,21 @@ class InventoryWidget(QWidget):
         return row.card_name.casefold()
 
     def _on_search_text_changed(self) -> None:
-        if (
-            SCRYFALL_INVENTORY_SEARCH_ENABLED
-            and self._scryfall_mode.isChecked()
-        ):
-            self._sync_scryfall_controls()
-            current = self._search.text().strip()
-            if not current:
-                self._clear_scryfall_results()
-                self._update_search_hint()
-                self._populate_table()
-            elif (
-                self._scryfall_oracle_ids is not None
-                and current != self._scryfall_query_applied
-            ):
-                # Text diverged from the last API result — wait for logo click.
-                self._scryfall_oracle_ids = None
-                self._scryfall_query_applied = ""
-                self._update_search_hint()
-                self._populate_table()
-            else:
-                self._update_search_hint()
+        if self._scryfall_active():
+            # Typing never queries Scryfall and never drops the last result:
+            # only the magnifier / Enter apply the text.
+            if not self._scryfall_busy:
+                self._scryfall_notice = ""
+            self._update_search_hint()
             return
+        if self._scryfall_notice:
+            self._scryfall_notice = ""
+            self._update_search_hint()
         self._search_timer.start()
+
+    def _on_search_return(self) -> None:
+        if self._scryfall_active() and not self._scryfall_busy:
+            self._run_scryfall_search()
 
     def _open_filters(self) -> None:
         with get_session() as session:
@@ -937,43 +974,89 @@ class InventoryWidget(QWidget):
             if not emit:
                 self._table.blockSignals(False)
 
+    def _scryfall_active(self) -> bool:
+        return (
+            SCRYFALL_INVENTORY_SEARCH_ENABLED
+            and self._scryfall_online
+            and self._scryfall_toggle.isChecked()
+        )
+
+    def _on_ping_timer(self) -> None:
+        if self.isVisible():
+            self._check_scryfall_online()
+
+    def _check_scryfall_online(self) -> None:
+        """Probe Scryfall in the background unless a recent probe answered."""
+        if not SCRYFALL_INVENTORY_SEARCH_ENABLED or self._ping_worker is not None:
+            return
+        now = time.monotonic()
+        if (
+            self._last_ping_at is not None
+            and (now - self._last_ping_at) * 1000 < SCRYFALL_PING_INTERVAL_MS
+        ):
+            return
+        self._last_ping_at = now
+        worker = ScryfallPingWorker()
+        self._ping_worker = worker
+        worker.result.connect(self._on_ping_result, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._on_ping_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_ping_finished(self) -> None:
+        self._ping_worker = None
+
+    def _on_ping_result(self, online: bool) -> None:
+        self._set_scryfall_online(online)
+
+    def _set_scryfall_online(self, online: bool) -> None:
+        if online == self._scryfall_online:
+            return
+        self._scryfall_online = online
+        if not online and self._scryfall_toggle.isChecked():
+            # Unchecking runs the normal exit path (name search comes back).
+            self._scryfall_toggle.setChecked(False)
+            self._scryfall_notice = self._translator.t(
+                "inventory.search.scryfall_offline"
+            )
+        self._scryfall_toggle.setVisible(online)
+        self._sync_scryfall_controls()
+        self._update_search_hint()
+
     def _on_scryfall_mode_toggled(self, checked: bool) -> None:
-        """Toggle mode only — never hits the Scryfall API here."""
+        """Enter / leave Scryfall mode — never hits the API by itself."""
         if not SCRYFALL_INVENTORY_SEARCH_ENABLED:
             return
         self._search_timer.stop()
         self._abandon_scryfall_worker()
         self._clear_scryfall_results()
-        # Ignore accidental click-through onto the run button while the
-        # checkbox click is still being delivered / layout is settling.
-        self._ignore_scryfall_button = True
-        self._scryfall_button.setEnabled(False)
-        self._scryfall_button.setIcon(scryfall_icon(22, active=checked))
+        self._scryfall_notice = ""
+        if not checked:
+            # Leftover Scryfall syntax would otherwise filter names to nothing.
+            self._search.blockSignals(True)
+            self._search.clear()
+            self._search.blockSignals(False)
         self._update_search_placeholder()
+        self._sync_scryfall_controls()
         self._update_search_hint()
-        # Defer so the checkbox paints before any table work.
+        if checked:
+            self._search.setFocus()
+        # Defer so the button paints before any table work.
         QTimer.singleShot(0, lambda: self._after_scryfall_mode_toggled(checked))
 
     def _after_scryfall_mode_toggled(self, checked: bool) -> None:
-        if checked != self._scryfall_mode.isChecked():
+        if checked != self._scryfall_toggle.isChecked():
             return
-        self._ignore_scryfall_button = False
-        self._sync_scryfall_controls()
         if not checked:
-            # Re-apply name filter (may differ from the full list shown in mode).
+            # Re-apply the name filter the box held while in Scryfall mode.
             self._search_timer.start()
             return
-        # Entering Scryfall mode ignores the name box until the logo runs.
-        # Rebuild only when a name filter was active (otherwise the table
-        # already shows the full panel-filtered collection).
+        # Scryfall mode ignores the name filter until a query is confirmed.
         if self._search.text().strip():
             self._populate_table()
 
     def _update_search_placeholder(self) -> None:
-        if (
-            SCRYFALL_INVENTORY_SEARCH_ENABLED
-            and self._scryfall_mode.isChecked()
-        ):
+        if self._scryfall_active():
             self._search.setPlaceholderText(
                 self._translator.t("inventory.search.scryfall")
             )
@@ -985,13 +1068,21 @@ class InventoryWidget(QWidget):
     def _sync_scryfall_controls(self) -> None:
         if not SCRYFALL_INVENTORY_SEARCH_ENABLED:
             return
-        mode_on = self._scryfall_mode.isChecked()
-        self._scryfall_button.setIcon(scryfall_icon(22, active=mode_on))
-        if self._ignore_scryfall_button or self._scryfall_busy:
-            self._scryfall_button.setEnabled(False)
-            return
-        has_query = bool(self._search.text().strip())
-        self._scryfall_button.setEnabled(mode_on and has_query)
+        mode_on = self._scryfall_active()
+        self._scryfall_toggle.setIcon(
+            scryfall_icon(SCRYFALL_BUTTON_ICON, active=mode_on)
+        )
+        self._scryfall_run.setVisible(mode_on)
+        if self._scryfall_busy:
+            self._scryfall_run.setIcon(stop_icon(SCRYFALL_BUTTON_ICON))
+            self._scryfall_run.setToolTip(
+                self._translator.t("inventory.search.scryfall_cancel")
+            )
+        else:
+            self._scryfall_run.setIcon(search_icon(SCRYFALL_BUTTON_ICON))
+            self._scryfall_run.setToolTip(
+                self._translator.t("inventory.search.scryfall_run")
+            )
 
     def _clear_scryfall_results(self) -> None:
         self._scryfall_oracle_ids = None
@@ -1002,16 +1093,14 @@ class InventoryWidget(QWidget):
         worker = self._search_worker
         self._search_worker = None
         self._scryfall_busy = False
+        self._scryfall_progress = None
         if worker is None:
             return
-        try:
-            worker.finished_ok.disconnect()
-        except RuntimeError:
-            pass
-        try:
-            worker.failed.disconnect()
-        except RuntimeError:
-            pass
+        for signal in (worker.finished_ok, worker.failed, worker.progress):
+            try:
+                signal.disconnect()
+            except RuntimeError:
+                pass
         worker.requestInterruption()
         if worker.isRunning():
             # Keep the QThread object alive until it finishes so Qt does not
@@ -1025,35 +1114,56 @@ class InventoryWidget(QWidget):
             self._search_hint.clear()
             self._search_hint.setVisible(False)
             return
+        text = self._scryfall_hint_text()
+        self._search_hint.setText(text)
+        self._search_hint.setVisible(bool(text))
+
+    def _scryfall_hint_text(self) -> str:
+        t = self._translator.t
         if self._scryfall_busy:
-            self._search_hint.setText(self._translator.t("inventory.search.scryfall_busy"))
-            self._search_hint.setVisible(True)
-            return
-        if self._scryfall_mode.isChecked() and self._scryfall_query_applied:
-            self._search_hint.setText(
-                self._translator.t("inventory.search.scryfall_applied").format(
-                    query=self._scryfall_query_applied,
-                    count=len(self._scryfall_oracle_ids or ()),
-                )
+            if self._scryfall_progress is None:
+                return t("inventory.search.scryfall_busy")
+            page, total = self._scryfall_progress
+            return t("inventory.search.scryfall_progress").format(
+                page=page, total=total
             )
-            self._search_hint.setVisible(True)
+        if self._scryfall_notice:
+            return self._scryfall_notice
+        if not self._scryfall_active():
+            return ""
+        if self._scryfall_oracle_ids is None:
+            return t("inventory.search.scryfall_idle")
+        applied = t("inventory.search.scryfall_applied").format(
+            query=self._scryfall_query_applied,
+            count=len(self._scryfall_oracle_ids),
+        )
+        if self._search.text().strip() != self._scryfall_query_applied:
+            return applied + " " + t("inventory.search.scryfall_stale")
+        return applied
+
+    def _on_scryfall_run_clicked(self) -> None:
+        if self._scryfall_busy:
+            self._cancel_scryfall_search()
             return
-        if self._scryfall_mode.isChecked():
-            self._search_hint.setText(
-                self._translator.t("inventory.search.scryfall_idle")
-            )
-            self._search_hint.setVisible(True)
-            return
-        self._search_hint.clear()
-        self._search_hint.setVisible(False)
+        self._run_scryfall_search()
+
+    def _cancel_scryfall_search(self) -> None:
+        self._abandon_scryfall_worker()
+        self._search_generation += 1
+        self._scryfall_notice = self._translator.t("inventory.search.scryfall_cancelled")
+        self._sync_scryfall_controls()
+        self._update_search_hint()
 
     def _run_scryfall_search(self) -> None:
-        if not SCRYFALL_INVENTORY_SEARCH_ENABLED:
+        if not self._scryfall_active() or self._scryfall_busy:
             return
-        if self._ignore_scryfall_button or self._scryfall_busy:
-            return
+        self._scryfall_notice = ""
         query_text = self._search.text().strip()
-        if not query_text or not self._scryfall_mode.isChecked():
+        if not query_text:
+            # Confirming an empty box drops the result and shows everything.
+            self._clear_scryfall_results()
+            self._update_search_hint()
+            self._populate_table()
             return
         self._abandon_scryfall_worker()
         inventory_ids = {row.oracle_id for row in self._rows}
@@ -1066,52 +1176,54 @@ class InventoryWidget(QWidget):
         worker = InventorySearchWorker(query_text, inventory_ids)
         self._search_worker = worker
 
+        def on_progress(page: int, total: int) -> None:
+            if generation != self._search_generation:
+                return
+            self._scryfall_progress = (page, total)
+            self._update_search_hint()
+
+        def finish() -> None:
+            self._scryfall_busy = False
+            self._scryfall_progress = None
+            self._search_worker = None
+            self._sync_scryfall_controls()
+
         def on_ok(done_query: object, oracle_ids: object) -> None:
             if generation != self._search_generation:
                 return
-            self._scryfall_busy = False
-            self._search_worker = None
-            if done_query != self._search.text().strip():
-                self._sync_scryfall_controls()
-                self._update_search_hint()
-                return
-            if not isinstance(oracle_ids, set):
-                self._sync_scryfall_controls()
-                self._update_search_hint()
-                return
-            self._scryfall_oracle_ids = oracle_ids
-            self._scryfall_query_applied = str(done_query)
+            finish()
+            if isinstance(oracle_ids, set):
+                self._scryfall_oracle_ids = oracle_ids
+                self._scryfall_query_applied = str(done_query)
+                self._populate_table()
             self._update_search_hint()
-            self._sync_scryfall_controls()
-            self._populate_table()
 
-        def on_fail(done_query: object, error: object) -> None:
+        def on_fail(done_query: object, kind: object, error: object) -> None:
             if generation != self._search_generation:
                 return
-            self._scryfall_busy = False
-            self._search_worker = None
-            self._scryfall_oracle_ids = None
-            self._scryfall_query_applied = ""
-            self._search_hint.setText(
-                self._translator.t("inventory.search.scryfall_failed").format(
-                    error=str(error)
-                )
+            finish()
+            # Keep the previous result on screen in every failure case.
+            key = (
+                "inventory.search.scryfall_invalid"
+                if kind == SEARCH_FAIL_QUERY
+                else "inventory.search.scryfall_failed"
             )
-            self._search_hint.setVisible(True)
-            self._sync_scryfall_controls()
-            self._populate_table()
+            self._scryfall_notice = self._translator.t(key).format(error=str(error))
+            self._update_search_hint()
+            if kind == SEARCH_FAIL_NETWORK:
+                # A dropped search is not proof of being offline: re-probe,
+                # and only a failed probe hides the logo.
+                self._last_ping_at = None
+                self._check_scryfall_online()
 
-        worker.finished_ok.connect(
-            on_ok, Qt.ConnectionType.QueuedConnection
-        )
+        worker.progress.connect(on_progress, Qt.ConnectionType.QueuedConnection)
+        worker.finished_ok.connect(on_ok, Qt.ConnectionType.QueuedConnection)
         worker.failed.connect(on_fail, Qt.ConnectionType.QueuedConnection)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
     def _populate_table(self) -> None:
-        scryfall_mode = (
-            SCRYFALL_INVENTORY_SEARCH_ENABLED and self._scryfall_mode.isChecked()
-        )
+        scryfall_mode = self._scryfall_active()
         name_query = "" if scryfall_mode else self._search.text()
         scryfall_ids = self._scryfall_oracle_ids if scryfall_mode else None
         # In Scryfall mode with no query run yet, show the full collection

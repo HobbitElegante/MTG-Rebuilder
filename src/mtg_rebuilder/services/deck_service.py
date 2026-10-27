@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -61,6 +62,20 @@ class DeckCardSummary:
     # Cached Scryfall fields feeding the list's sort / group-by-type controls.
     cmc: float | None = None
     type_line: str | None = None
+    is_basic_land: bool = False
+
+
+@dataclass(frozen=True)
+class CardListStock:
+    """Physical copies plus how many lists include the card.
+
+    Basics still report zeros here; the preview treats them as unlimited.
+    ``decks_using`` counts lists (armed and dismantled), not assignments.
+    """
+
+    total_copies: int
+    free_copies: int
+    decks_using: int
 
 
 @dataclass(frozen=True)
@@ -503,6 +518,7 @@ class DeckService:
                 role=deck_card.role,
                 cmc=card.cmc,
                 type_line=card.type_line,
+                is_basic_land=card.is_basic_land,
             )
             for deck_card, card in rows
         ]
@@ -528,6 +544,27 @@ class DeckService:
             for deck_card, card in rows
         ]
         return compute_deck_statistics(cards)
+
+    def card_list_stock(self, oracle_ids: Iterable[str]) -> dict[str, CardListStock]:
+        """Inventory and list-usage counts for the deck preview (two queries).
+
+        Every requested id is present. Missing cards are zeros. The same card
+        on two roles of one deck counts as one list.
+        """
+        ids = list(dict.fromkeys(oracle_ids))
+        if not ids:
+            return {}
+        totals = self._copies.totals_for_cards(ids)
+        free = self._copies.free_counts_for(ids)
+        lists = self._decks.list_counts_for_cards(ids)
+        return {
+            oracle_id: CardListStock(
+                total_copies=totals.get(oracle_id, 0),
+                free_copies=free.get(oracle_id, 0),
+                decks_using=lists.get(oracle_id, 0),
+            )
+            for oracle_id in ids
+        }
 
     def deck_edit_rows(self, deck_id: int) -> list[DeckEditRow]:
         rows = self._decks.list_deck_cards_with_card(deck_id, exclude_token=True)

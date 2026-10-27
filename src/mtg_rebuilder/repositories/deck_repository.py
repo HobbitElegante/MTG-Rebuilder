@@ -130,6 +130,16 @@ class DeckRepository:
     def get_deck_card(
         self, deck_id: int, card_id: str, role: DeckCardRole
     ) -> DeckCard | None:
+        # autoflush=False: a SELECT would miss DeckCards added earlier in this
+        # session (same card printed twice on a list). Check pending first.
+        for pending in self._session.new:
+            if (
+                isinstance(pending, DeckCard)
+                and pending.deck_id == deck_id
+                and pending.card_id == card_id
+                and pending.role == role
+            ):
+                return pending
         return self._session.scalar(
             select(DeckCard).where(
                 DeckCard.deck_id == deck_id,
@@ -271,6 +281,25 @@ class DeckRepository:
                 is_basic_land,
             ) in rows
         ]
+
+    def list_counts_for_cards(self, oracle_ids: Iterable[str]) -> dict[str, int]:
+        """How many deck lists include each card (one query, distinct decks).
+
+        A card listed twice in the same deck (two roles) counts once. Tokens
+        are excluded. Armed and dismantled lists both count.
+        """
+        ids = list(oracle_ids)
+        if not ids:
+            return {}
+        rows = self._session.execute(
+            select(DeckCard.card_id, func.count(func.distinct(DeckCard.deck_id)))
+            .where(
+                DeckCard.card_id.in_(ids),
+                DeckCard.role != DeckCardRole.TOKEN,
+            )
+            .group_by(DeckCard.card_id)
+        ).all()
+        return {card_id: int(count) for card_id, count in rows}
 
     def deck_names_for_card(self, oracle_id: str) -> tuple[str, ...]:
         return tuple(

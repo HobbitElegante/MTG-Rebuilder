@@ -5,7 +5,12 @@ import pytest
 
 from mtg_rebuilder.models import Base, Card, CardAssignment, CardCopy, Deck, DeckCard
 from mtg_rebuilder.models.enums import DeckCardRole, DeckStatus
-from mtg_rebuilder.services.deck_service import DeckService, FreeCoverage, InventoryService
+from mtg_rebuilder.services.deck_service import (
+    CardListStock,
+    DeckService,
+    FreeCoverage,
+    InventoryService,
+)
 
 
 @pytest.fixture
@@ -606,3 +611,66 @@ def test_deck_card_summaries_orders_command_zone_first(session: Session) -> None
     assert [row.oracle_id for row in summaries] == ["cmd", "prt", "arc", "sol"]
     assert summaries[2].quantity == 2
     assert all(row.role != DeckCardRole.TOKEN for row in summaries)
+
+
+def test_card_list_stock_counts_copies_and_lists(session: Session) -> None:
+    sol = Card(oracle_id="sol", name="Sol Ring", is_basic_land=False, is_token=False)
+    forest = Card(
+        oracle_id="forest", name="Forest", is_basic_land=True, is_token=False
+    )
+    armed = Deck(name="Armed", status=DeckStatus.DISMANTLED, sort_order=0)
+    other = Deck(name="Other", status=DeckStatus.DISMANTLED, sort_order=1)
+    session.add_all([sol, forest, armed, other])
+    session.flush()
+    InventoryService(session).add_copy("sol", quantity=3)
+    session.add_all(
+        [
+            DeckCard(
+                deck_id=armed.id,
+                card_id="sol",
+                quantity=1,
+                role=DeckCardRole.MAIN,
+            ),
+            DeckCard(
+                deck_id=armed.id,
+                card_id="forest",
+                quantity=10,
+                role=DeckCardRole.MAIN,
+            ),
+            DeckCard(
+                deck_id=other.id,
+                card_id="sol",
+                quantity=1,
+                role=DeckCardRole.MAIN,
+            ),
+            # Same card, second role: still one list.
+            DeckCard(
+                deck_id=other.id,
+                card_id="sol",
+                quantity=1,
+                role=DeckCardRole.COMMANDER,
+            ),
+        ]
+    )
+    session.flush()
+
+    service = DeckService(session)
+    service.set_status(armed, DeckStatus.ARMED)
+    stock = service.card_list_stock(["sol", "forest", "missing"])
+
+    assert stock["sol"] == CardListStock(
+        total_copies=3, free_copies=2, decks_using=2
+    )
+    assert stock["forest"] == CardListStock(
+        total_copies=0, free_copies=0, decks_using=1
+    )
+    assert stock["missing"] == CardListStock(
+        total_copies=0, free_copies=0, decks_using=0
+    )
+    assert service.card_list_stock([]) == {}
+    forest_row = next(
+        row
+        for row in service.deck_card_summaries(armed.id)
+        if row.oracle_id == "forest"
+    )
+    assert forest_row.is_basic_land is True

@@ -314,6 +314,61 @@ def test_preview_deck_list_update_without_changes(session: Session) -> None:
     assert not preview.has_changes
 
 
+def test_import_merges_reprint_lines_of_the_same_card(session: Session) -> None:
+    session.add(
+        Card(
+            oracle_id="b2c6aa39-2d2a-459c-a555-fb48ba993373",
+            name="Island",
+            type_line="Basic Land — Island",
+            is_basic_land=True,
+            is_token=False,
+        )
+    )
+    session.flush()
+
+    result = ImportService(session, _StrictFakeScryfall(session)).import_decklist_text(
+        deck_name="Omenpaths",
+        text="2 Island (FRA) 283\n1 Island (FRA) 284",
+    )
+
+    rows = list(
+        session.scalars(select(DeckCard).where(DeckCard.deck_id == result.deck.id)).all()
+    )
+    assert len(rows) == 1
+    assert rows[0].card_id == "b2c6aa39-2d2a-459c-a555-fb48ba993373"
+    assert rows[0].quantity == 3
+    assert rows[0].role == DeckCardRole.MAIN
+    assert result.warnings == []
+
+
+def test_replace_deck_list_merges_reprint_lines_of_the_same_card(
+    session: Session,
+) -> None:
+    session.add(
+        Card(
+            oracle_id="island",
+            name="Island",
+            type_line="Basic Land — Island",
+            is_basic_land=True,
+            is_token=False,
+        )
+    )
+    session.flush()
+    deck = _add_deck(session, "Omenpaths", [])
+
+    warnings = ImportService(session, _StrictFakeScryfall(session)).replace_deck_list(
+        deck.id,
+        "1 Island (FRA) 287\n1 Island (FRA) 288",
+    )
+
+    assert warnings == []
+    rows = list(
+        session.scalars(select(DeckCard).where(DeckCard.deck_id == deck.id)).all()
+    )
+    assert len(rows) == 1
+    assert rows[0].quantity == 2
+
+
 def test_replace_deck_list_swaps_cards_and_promotes_commander(session: Session) -> None:
     _add_cards(session, [("sol", "Sol Ring"), ("terror", "Terror"), ("vihaan", "Vihaan")])
     deck = _add_deck(session, "Vihaan", [("sol", 1), ("terror", 1)])

@@ -11,7 +11,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from mtg_rebuilder.algorithms.deck_stats import TYPE_ORDER
+from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.models.enums import DeckCardRole
+from mtg_rebuilder.services.deck_service import CardListStock
 
 if TYPE_CHECKING:
     from mtg_rebuilder.services.deck_service import DeckCardSummary
@@ -114,3 +116,29 @@ def group_deck_cards(
                 (group, _sorted_main(buckets[group], key=key, ascending=ascending))
             )
     return groups
+
+
+def format_card_stock_text(
+    stock: CardListStock,
+    translator: Translator,
+    *,
+    is_basic_land: bool,
+) -> str:
+    """Three lines for the selected-card column: inventory, free, lists.
+
+    Basics are unlimited and are not stored as copies, so the first two
+    lines use the unlimited label instead of a zero that would look missing.
+    """
+    if is_basic_land:
+        inventory = translator.t("decks.cards.stock.unlimited")
+        free = inventory
+    else:
+        inventory = str(stock.total_copies)
+        free = str(stock.free_copies)
+    return "\n".join(
+        (
+            translator.t("decks.cards.stock.inventory").format(count=inventory),
+            translator.t("decks.cards.stock.free").format(count=free),
+            translator.t("decks.cards.stock.decks").format(count=stock.decks_using),
+        )
+    )

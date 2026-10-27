@@ -1,7 +1,9 @@
+from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.models.enums import DeckCardRole
-from mtg_rebuilder.services.deck_service import DeckCardSummary
+from mtg_rebuilder.services.deck_service import CardListStock, DeckCardSummary
 from mtg_rebuilder.ui.deck_cards_display import (
     COMMAND_GROUP,
+    format_card_stock_text,
     group_deck_cards,
     primary_card_type,
     sort_deck_cards,
@@ -111,3 +113,25 @@ def test_group_deck_cards_sorts_within_groups() -> None:
         "Wrath of God",
         "Ponder",
     ]
+
+
+def test_format_card_stock_text_counts_and_basics() -> None:
+    stock = CardListStock(total_copies=4, free_copies=1, decks_using=3)
+    english = format_card_stock_text(stock, Translator("en"), is_basic_land=False)
+    assert english == (
+        "Copies in inventory: 4\nFree copies: 1\nDecks using it: 3"
+    )
+    spanish = format_card_stock_text(stock, Translator("es"), is_basic_land=False)
+    assert spanish == (
+        "Copias en inventario: 4\nCopias libres: 1\nMazos que la usan: 3"
+    )
+    basic = format_card_stock_text(
+        CardListStock(total_copies=0, free_copies=0, decks_using=8),
+        Translator("es"),
+        is_basic_land=True,
+    )
+    assert basic == (
+        "Copias en inventario: ilimitadas\n"
+        "Copias libres: ilimitadas\n"
+        "Mazos que la usan: 8"
+    )

@@ -21,22 +21,35 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Search collection (name or Scryfall syntax, e.g. t:creature c:r)…"
         ),
         "inventory.search.name": "Filter collection by card name…",
-        "inventory.search.scryfall": "Scryfall syntax (e.g. id<=rb t:creature)…",
-        "inventory.search.scryfall_mode": "Scryfall",
-        "inventory.search.scryfall_mode_tip": (
-            "Enables Scryfall syntax in the search box. Nothing is queried until "
-            "you press the Scryfall logo — results are limited to cards you own."
+        "inventory.search.scryfall": (
+            "Scryfall syntax (e.g. otag:ramp id<=rg) — Enter to search…"
         ),
-        "inventory.search.scryfall_run": "Run Scryfall search on your collection",
+        "inventory.search.scryfall_mode_tip": (
+            "Scryfall search: the box takes full Scryfall syntax, tags included. "
+            "Nothing is sent until you press Enter or the magnifier, and only "
+            "cards you own are shown."
+        ),
+        "inventory.search.scryfall_run": "Search Scryfall (Enter)",
+        "inventory.search.scryfall_cancel": "Stop the search",
         "inventory.search.scryfall_idle": (
-            "Scryfall mode on — type a query, then press the Scryfall logo. "
-            "Only cards in your collection are kept."
+            "Scryfall mode — type a query and press Enter or the magnifier."
         ),
         "inventory.search.scryfall_busy": "Searching Scryfall…",
+        "inventory.search.scryfall_progress": (
+            "Searching Scryfall… page {page} of {total}"
+        ),
         "inventory.search.scryfall_applied": (
             "Scryfall “{query}” → {count} card(s) in your collection"
         ),
+        "inventory.search.scryfall_stale": "(press Enter to search the new text)",
+        "inventory.search.scryfall_cancelled": (
+            "Search stopped — the previous result is still shown."
+        ),
+        "inventory.search.scryfall_invalid": "Scryfall rejected the query: {error}",
         "inventory.search.scryfall_failed": "Scryfall search failed: {error}",
+        "inventory.search.scryfall_offline": (
+            "Lost the connection to Scryfall — back to name search."
+        ),
         "inventory.search.hint": "Type a card name to check whether you have free copies.",
         "inventory.search.offline_filters": (
             "Ignored filters [{filters}]: require an internet connection"
@@ -333,6 +346,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.cards.group_header": "{name}:",
         "decks.cards.group.command_zone": "Command zone",
         "decks.cards.group.other": "Other",
+        "decks.cards.stock.inventory": "Copies in inventory: {count}",
+        "decks.cards.stock.free": "Free copies: {count}",
+        "decks.cards.stock.decks": "Decks using it: {count}",
+        "decks.cards.stock.unlimited": "unlimited",
+        "decks.cards.stock.tooltip": (
+            "Free copies are not assigned to an armed deck. "
+            "Decks using it counts every list that includes this card, "
+            "including the one you are viewing. "
+            "Basic lands are unlimited and are not stored as copies."
+        ),
         "decks.stats.lands": "Lands: {count} ({basic} basic)",
         "decks.stats.avg_no_lands": "x̄ mana value (no lands): {value}",
         "decks.stats.avg_with_lands": "x̄ mana value (with lands): {value}",
@@ -710,22 +733,35 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Buscar en la colección (nombre o sintaxis Scryfall, p. ej. t:creature c:r)…"
         ),
         "inventory.search.name": "Filtrar la colección por nombre de carta…",
-        "inventory.search.scryfall": "Sintaxis Scryfall (p. ej. id<=rb t:creature)…",
-        "inventory.search.scryfall_mode": "Scryfall",
-        "inventory.search.scryfall_mode_tip": (
-            "Activa la sintaxis Scryfall en el cuadro. No se consulta nada hasta "
-            "que pulses el logo de Scryfall — solo se conservan cartas de tu colección."
+        "inventory.search.scryfall": (
+            "Sintaxis Scryfall (p. ej. otag:ramp id<=rg) — Enter para buscar…"
         ),
-        "inventory.search.scryfall_run": "Buscar en Scryfall sobre tu colección",
+        "inventory.search.scryfall_mode_tip": (
+            "Búsqueda Scryfall: el cuadro acepta la sintaxis completa de Scryfall, "
+            "tags incluidos. No se envía nada hasta que pulses Enter o la lupa, "
+            "y solo se muestran cartas que tienes."
+        ),
+        "inventory.search.scryfall_run": "Buscar en Scryfall (Enter)",
+        "inventory.search.scryfall_cancel": "Detener la búsqueda",
         "inventory.search.scryfall_idle": (
-            "Modo Scryfall activo — escribe la consulta y pulsa el logo. "
-            "Solo se muestran cartas de tu inventario."
+            "Modo Scryfall — escribe la consulta y pulsa Enter o la lupa."
         ),
         "inventory.search.scryfall_busy": "Buscando en Scryfall…",
+        "inventory.search.scryfall_progress": (
+            "Buscando en Scryfall… página {page} de {total}"
+        ),
         "inventory.search.scryfall_applied": (
             "Scryfall «{query}» → {count} carta(s) en tu colección"
         ),
+        "inventory.search.scryfall_stale": "(pulsa Enter para buscar el texto nuevo)",
+        "inventory.search.scryfall_cancelled": (
+            "Búsqueda detenida — se mantiene el resultado anterior."
+        ),
+        "inventory.search.scryfall_invalid": "Scryfall rechazó la consulta: {error}",
         "inventory.search.scryfall_failed": "Falló la búsqueda Scryfall: {error}",
+        "inventory.search.scryfall_offline": (
+            "Se perdió la conexión con Scryfall — vuelve la búsqueda por nombre."
+        ),
         "inventory.search.hint": "Escribe el nombre de una carta para ver si tienes copias libres.",
         "inventory.search.offline_filters": (
             "Se ignoraron los filtros [{filters}]: requieren conexión a internet"
@@ -1022,6 +1058,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "decks.cards.group_header": "{name}:",
         "decks.cards.group.command_zone": "Zona de mando",
         "decks.cards.group.other": "Otros",
+        "decks.cards.stock.inventory": "Copias en inventario: {count}",
+        "decks.cards.stock.free": "Copias libres: {count}",
+        "decks.cards.stock.decks": "Mazos que la usan: {count}",
+        "decks.cards.stock.unlimited": "ilimitadas",
+        "decks.cards.stock.tooltip": (
+            "Las copias libres no están asignadas a un mazo armado. "
+            "Mazos que la usan cuenta cada listado que incluye esta carta, "
+            "incluido el que estás viendo. "
+            "Las tierras básicas son ilimitadas y no se guardan como copias."
+        ),
         "decks.stats.lands": "Tierras: {count} ({basic} básicas)",
         "decks.stats.avg_no_lands": "x̄ valor de maná (sin tierras): {value}",
         "decks.stats.avg_with_lands": "x̄ valor de maná (con tierras): {value}",

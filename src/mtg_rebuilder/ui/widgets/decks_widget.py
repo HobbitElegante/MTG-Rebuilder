@@ -37,7 +37,7 @@ from mtg_rebuilder.services import (
     SettingsService,
 )
 from mtg_rebuilder.services.deck_export import load_deck_export_cards
-from mtg_rebuilder.services.deck_service import DeckCardSummary
+from mtg_rebuilder.services.deck_service import CardListStock, DeckCardSummary
 from mtg_rebuilder.services.decklist_parser import DecklistFormat, detect_format
 from mtg_rebuilder.ui.error_text import format_deck_url_error
 from mtg_rebuilder.ui.combo import configure_data_combo
@@ -46,6 +46,7 @@ from mtg_rebuilder.ui.deck_cards_display import (
     LAND_GROUP,
     OTHER_GROUP,
     DeckCardsSortKey,
+    format_card_stock_text,
     group_deck_cards,
     sort_deck_cards,
 )
@@ -229,6 +230,7 @@ class DecksWidget(QWidget):
         self._cards_sort_ascending = True
         self._group_cards_by_type = False
         self._deck_card_rows: list[DeckCardSummary] = []
+        self._card_stock: dict[str, CardListStock] = {}
         # Heavy list load waits until Mazos is shown (Browse is the startup tab).
         self._decks_loaded = False
         self._needs_reload = False
@@ -500,6 +502,10 @@ class DecksWidget(QWidget):
         )
         self._group_by_type_check.toggled.connect(self._on_group_by_type_toggled)
         preview_layout.addWidget(self._group_by_type_check)
+        self._card_stock_label = QLabel("")
+        self._card_stock_label.setWordWrap(True)
+        self._card_stock_label.setVisible(False)
+        preview_layout.addWidget(self._card_stock_label)
         preview_layout.addWidget(self._card_preview, 1)
 
         self._detail_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -896,7 +902,9 @@ class DecksWidget(QWidget):
         self._commander_preview.clear()
         self._commander_column.set_stats(None)
         self._card_preview.clear()
+        self._card_stock = {}
         self._deck_card_rows = []
+        self._render_card_stock(None)
         self._deck_cards.blockSignals(True)
         self._deck_cards.clear()
         self._deck_cards.blockSignals(False)
@@ -920,6 +928,7 @@ class DecksWidget(QWidget):
             cards = service.deck_card_summaries(deck_id)
             zone = service.command_zone_cards(deck_id)
             stats = service.deck_statistics(deck_id)
+            stock = service.card_list_stock(card.oracle_id for card in cards)
 
         self._commander_column.set_stats(stats)
         if zone:
@@ -928,6 +937,7 @@ class DecksWidget(QWidget):
             self._commander_preview.clear()
 
         self._deck_card_rows = cards
+        self._card_stock = stock
         self._render_deck_cards(select_oracle=zone[0][0] if zone else None)
 
     def _make_group_header_item(self, group: str) -> QListWidgetItem:
@@ -970,6 +980,7 @@ class DecksWidget(QWidget):
             )
             self._deck_cards.blockSignals(False)
             self._card_preview.clear()
+            self._render_card_stock(None)
             return
 
         select_row: int | None = None
@@ -1015,13 +1026,39 @@ class DecksWidget(QWidget):
         item = self._deck_cards.currentItem()
         if item is None:
             self._card_preview.clear()
+            self._render_card_stock(None)
             return
         oracle_id = item.data(CARD_ORACLE_ROLE)
         name = item.data(CARD_NAME_ROLE)
         if not isinstance(oracle_id, str):
             self._card_preview.clear()
+            self._render_card_stock(None)
             return
         self._card_preview.set_card(oracle_id, name if isinstance(name, str) else "")
+        self._render_card_stock(oracle_id)
+
+    def _render_card_stock(self, oracle_id: str | None) -> None:
+        """Inventory and list-usage lines above the selected-card image."""
+        stock = self._card_stock.get(oracle_id) if oracle_id is not None else None
+        card = next(
+            (row for row in self._deck_card_rows if row.oracle_id == oracle_id),
+            None,
+        )
+        if stock is None or card is None:
+            self._card_stock_label.clear()
+            self._card_stock_label.setVisible(False)
+            return
+        self._card_stock_label.setText(
+            format_card_stock_text(
+                stock,
+                self._translator,
+                is_basic_land=card.is_basic_land,
+            )
+        )
+        self._card_stock_label.setToolTip(
+            self._translator.t("decks.cards.stock.tooltip")
+        )
+        self._card_stock_label.setVisible(True)
 
     def _on_selection_changed(self) -> None:
         deck_id = self._selected_deck_id()

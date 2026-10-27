@@ -15,7 +15,7 @@ _COLOR_ACTIVE = QColor("#0f766e")
 _CHIP_ACTIVE = QColor("#ccfbf1")
 _CHIP_BORDER = QColor("#5eead4")
 
-_ICON_CACHE: dict[tuple[int, bool], QIcon] = {}
+_ICON_CACHE: dict[tuple[int, object], QIcon] = {}
 
 
 def _draw_seal(painter: QPainter, bound: QRectF, color: QColor) -> None:
@@ -68,9 +68,9 @@ def scryfall_icon(size: int = 22, *, active: bool = False) -> QIcon:
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
     if active:
-        painter.setPen(QPen(_CHIP_BORDER, 1.0))
+        painter.setPen(QPen(_CHIP_BORDER, 1.5))
         painter.setBrush(_CHIP_ACTIVE)
-        painter.drawRoundedRect(QRectF(0.5, 0.5, canvas - 1, canvas - 1), 5, 5)
+        painter.drawEllipse(QRectF(0.75, 0.75, canvas - 1.5, canvas - 1.5))
         margin = 4.0
         color = _COLOR_ACTIVE
     else:
@@ -81,6 +81,55 @@ def scryfall_icon(size: int = 22, *, active: bool = False) -> QIcon:
     _draw_seal(painter, seal, color)
     painter.end()
 
+    icon = QIcon(pixmap)
+    _ICON_CACHE[key] = icon
+    return icon
+
+
+def _blank(size: int) -> tuple[QPixmap, QPainter]:
+    pixmap = QPixmap(QSize(size, size))
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    return pixmap, painter
+
+
+def search_icon(size: int = 22) -> QIcon:
+    """Magnifier for the Scryfall run button (reads on light and dark)."""
+    key = (size, "search")
+    cached = _ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pixmap, painter = _blank(size)
+    pen = QPen(_COLOR_ACTIVE, max(2.0, size / 9))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    lens = size * 0.58
+    painter.drawEllipse(QRectF(size * 0.12, size * 0.12, lens, lens))
+    painter.drawLine(
+        QPointF(size * 0.12 + lens * 0.88, size * 0.12 + lens * 0.88),
+        QPointF(size * 0.88, size * 0.88),
+    )
+    painter.end()
+    icon = QIcon(pixmap)
+    _ICON_CACHE[key] = icon
+    return icon
+
+
+def stop_icon(size: int = 22) -> QIcon:
+    """Square stop mark shown on the run button while a search is going."""
+    key = (size, "stop")
+    cached = _ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pixmap, painter = _blank(size)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(_COLOR_ACTIVE)
+    side = size * 0.5
+    offset = (size - side) / 2
+    painter.drawRoundedRect(QRectF(offset, offset, side, side), 2, 2)
+    painter.end()
     icon = QIcon(pixmap)
     _ICON_CACHE[key] = icon
     return icon
