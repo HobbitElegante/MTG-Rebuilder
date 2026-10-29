@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -218,18 +219,28 @@ class ViablePlansCacheStore:
         return compare_fingerprints(cached_fp, current)
 
 
-def deck_ids_appearing_in_plans(plans: tuple[ViablePlan, ...]) -> frozenset[int]:
-    """Deck ids that appear in at least one viable combination (for the filter)."""
-    ids: set[int] = set()
-    for plan in plans:
-        ids.update(plan.deck_ids)
-    return frozenset(ids)
-
-
 def filter_plans_containing(
     plans: tuple[ViablePlan, ...],
-    deck_id: int | None,
+    deck_ids: Collection[int],
 ) -> tuple[ViablePlan, ...]:
-    if deck_id is None:
+    """Combinations that include **every** deck in ``deck_ids`` (empty = all)."""
+    if not deck_ids:
         return plans
-    return tuple(plan for plan in plans if deck_id in plan.deck_ids)
+    required = frozenset(deck_ids)
+    return tuple(plan for plan in plans if required.issubset(plan.deck_ids))
+
+
+def co_occurring_deck_ids(
+    plans: tuple[ViablePlan, ...],
+    deck_ids: Collection[int] = (),
+) -> frozenset[int]:
+    """Decks that can still be added to the filter without emptying it.
+
+    These are the decks appearing in a combination that already includes all
+    of ``deck_ids``, minus ``deck_ids`` themselves. With no selection this is
+    every deck that appears in some combination.
+    """
+    ids: set[int] = set()
+    for plan in filter_plans_containing(plans, deck_ids):
+        ids.update(plan.deck_ids)
+    return frozenset(ids.difference(deck_ids))

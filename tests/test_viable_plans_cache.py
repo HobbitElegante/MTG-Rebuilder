@@ -8,7 +8,7 @@ from mtg_rebuilder.services.viable_plans_cache import (
     ViablePlansCacheStore,
     build_deck_signature,
     compare_fingerprints,
-    deck_ids_appearing_in_plans,
+    co_occurring_deck_ids,
     filter_plans_containing,
 )
 from sqlalchemy import create_engine
@@ -61,18 +61,39 @@ def test_filter_plans_containing() -> None:
         ViablePlan(deck_ids=(2, 3), deck_names=("B", "C")),
         ViablePlan(deck_ids=(1, 3), deck_names=("A", "C")),
     )
-    assert len(filter_plans_containing(plans, None)) == 3
-    filtered = filter_plans_containing(plans, 1)
+    assert len(filter_plans_containing(plans, ())) == 3
+    filtered = filter_plans_containing(plans, (1,))
     assert [plan.deck_names for plan in filtered] == [("A", "B"), ("A", "C")]
 
 
-def test_deck_ids_appearing_in_plans() -> None:
+def test_filter_plans_containing_requires_every_deck() -> None:
     plans = (
-        ViablePlan(deck_ids=(1, 2), deck_names=("A", "B")),
-        ViablePlan(deck_ids=(2, 3), deck_names=("B", "C")),
+        ViablePlan(deck_ids=(1, 2, 3), deck_names=("A", "B", "C")),
+        ViablePlan(deck_ids=(1, 2, 4), deck_names=("A", "B", "D")),
+        ViablePlan(deck_ids=(1, 3, 4), deck_names=("A", "C", "D")),
     )
-    assert deck_ids_appearing_in_plans(plans) == frozenset({1, 2, 3})
-    assert deck_ids_appearing_in_plans(()) == frozenset()
+    assert [p.deck_ids for p in filter_plans_containing(plans, (1, 2))] == [
+        (1, 2, 3),
+        (1, 2, 4),
+    ]
+    assert [p.deck_ids for p in filter_plans_containing(plans, (2, 1, 4))] == [
+        (1, 2, 4)
+    ]
+    assert filter_plans_containing(plans, (2, 3, 4)) == ()
+
+
+def test_co_occurring_deck_ids() -> None:
+    plans = (
+        ViablePlan(deck_ids=(1, 2, 3), deck_names=("A", "B", "C")),
+        ViablePlan(deck_ids=(1, 2, 4), deck_names=("A", "B", "D")),
+        ViablePlan(deck_ids=(3, 4, 5), deck_names=("C", "D", "E")),
+    )
+    assert co_occurring_deck_ids(plans) == frozenset({1, 2, 3, 4, 5})
+    assert co_occurring_deck_ids(plans, (1,)) == frozenset({2, 3, 4})
+    assert co_occurring_deck_ids(plans, (1, 2)) == frozenset({3, 4})
+    assert co_occurring_deck_ids(plans, (1, 2, 3)) == frozenset()
+    assert co_occurring_deck_ids(plans, (1, 5)) == frozenset()
+    assert co_occurring_deck_ids(()) == frozenset()
 
 
 def test_cache_store_roundtrip(session: Session) -> None:

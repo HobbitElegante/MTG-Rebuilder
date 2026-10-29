@@ -44,7 +44,7 @@ Prebuilt **Downloads** track **`v1.3.0`** (online Scryfall search in Inventory, 
 - Equally optimal plans are ordered so the one drawing the most cards from a single donor comes first; every plan stays selectable
 - Confirm / cancel to apply; searchable target picker; clear status when already armed or infeasible
 - Free inventory + unlimited basics count toward coverage; tokens are ignored (not stored on lists)
-- **Viable plans** sub-tab: explore which sets of N decks fit physical stock (names only). Cache per N/ɸ, background calculate, filter by deck (only decks that appear in results), collapsible combination groups, commander image grid / inline image view, **Send to assembly plan** (alphabetical queue)
+- **Viable plans** sub-tab: explore which sets of N decks fit physical stock (names only). Cache per N/ɸ, background calculate, filter by several decks added one at a time as chips (only combinations including every chosen deck; suggestions only offer decks that still appear alongside them in some calculated size, and each size shows its match count, e.g. `4 decks (26)`), collapsible combination groups, commander image grid / inline image view, **Send to assembly plan** (alphabetical queue)
 
 ### Browse & data
 

@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QThread, QSize, Signal
+from PySide6.QtCore import Qt, QThread, QSize, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QIcon, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -44,7 +44,8 @@ from mtg_rebuilder.services.viable_plans_cache import (
     ViablePlansCacheStore,
     build_deck_signature,
     cache_entry_key,
-    deck_ids_appearing_in_plans,
+    co_occurring_deck_ids,
+    compare_fingerprints,
     filter_plans_containing,
 )
 from mtg_rebuilder.ui.combo import (
@@ -52,6 +53,7 @@ from mtg_rebuilder.ui.combo import (
     configure_data_combo,
 )
 from mtg_rebuilder.ui.widgets.card_preview import card_images_enabled
+from mtg_rebuilder.ui.widgets.chip_bar import Chip, ChipBar
 from mtg_rebuilder.ui.widgets.edition_picker import CopyEditionTable
 from mtg_rebuilder.ui.widgets.viable_commanders_column import (
     ViableCommandersColumn,
@@ -179,7 +181,9 @@ class OptimizerWidget(QWidget):
         self._viable_result_size = 0
         self._viable_truncated = False
         self._viable_freshness = CacheFreshness.MISSING
-        self._viable_filter_deck_id: int | None = None
+        self._viable_filter_deck_ids: list[int] = []
+        self._viable_deck_labels: dict[int, str] = {}
+        self._viable_fingerprint: CollectionFingerprint | None = None
         self._viable_shown_plans: tuple[ViablePlan, ...] = ()
         self._viable_image_view = False
         with get_session() as session:
@@ -243,6 +247,7 @@ class OptimizerWidget(QWidget):
             filter_edit.setPlaceholderText(
                 self._translator.t("optimize.viable.filter.search")
             )
+        self._set_viable_filter_chip_texts()
         self._viable_send_button.setText(
             self._translator.t("optimize.viable.send_to_assembly")
         )
@@ -334,11 +339,18 @@ class OptimizerWidget(QWidget):
         filter_completer.setFilterMode(Qt.MatchFlag.MatchContains)
         filter_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self._viable_filter_combo.setCompleter(filter_completer)
-        self._viable_filter_combo.activated.connect(self._on_viable_filter_changed)
-        filter_edit.editingFinished.connect(self._on_viable_filter_changed)
+        self._viable_filter_combo.activated.connect(self._on_viable_filter_activated)
+        filter_completer.activated[str].connect(self._on_viable_filter_completed)
+        filter_edit.returnPressed.connect(self._on_viable_filter_return)
         filter_row.addWidget(self._viable_filter_label)
         filter_row.addWidget(self._viable_filter_combo, 1)
         right.addLayout(filter_row)
+
+        self._viable_filter_chips = ChipBar()
+        self._viable_filter_chips.chip_removed.connect(self._on_viable_filter_chip_removed)
+        self._viable_filter_chips.cleared.connect(self._clear_viable_filter)
+        self._set_viable_filter_chip_texts()
+        right.addWidget(self._viable_filter_chips)
 
         self._viable_status = QLabel("")
         self._viable_status.setWordWrap(True)
@@ -401,14 +413,12 @@ class OptimizerWidget(QWidget):
         previous = self._viable_mode_n
         self._viable_mode_list.blockSignals(True)
         self._viable_mode_list.clear()
-        max_item = QListWidgetItem(self._translator.t("optimize.viable.max"))
+        max_item = QListWidgetItem(self._viable_mode_label(None))
         max_item.setData(Qt.ItemDataRole.UserRole, None)
         self._viable_mode_list.addItem(max_item)
         upper = min(VIABLE_FIXED_N_MAX, self._deck_count) if self._deck_count else VIABLE_FIXED_N_MAX
         for n in range(2, upper + 1):
-            item = QListWidgetItem(
-                self._translator.t("optimize.viable.n").format(n=n)
-            )
+            item = QListWidgetItem(self._viable_mode_label(n))
             item.setData(Qt.ItemDataRole.UserRole, n)
             self._viable_mode_list.addItem(item)
         select_row = 0
@@ -421,49 +431,117 @@ class OptimizerWidget(QWidget):
             Qt.ItemDataRole.UserRole
         )
         self._viable_mode_list.blockSignals(False)
+        self._update_viable_mode_counts()
+
+    def _viable_mode_label(self, n: int | None) -> str:
+        if n is None:
+            return self._translator.t("optimize.viable.max")
+        return self._translator.t("optimize.viable.n").format(n=n)
+
+    def _cached_viable_plans_by_mode(self) -> dict[int | None, tuple[ViablePlan, ...]]:
+        """Calculated combinations of every size in the list, for the current ɸ.
+
+        Sizes never calculated (or needing a mandatory recalculation) are left
+        out: counting or suggesting from them would be a guess.
+        """
+        respect = self._viable_respect.isChecked()
+        entries: dict[int | None, tuple[ViablePlan, ...]] = {}
+        with get_session() as session:
+            store = self._viable_cache_store(session)
+            for row in range(self._viable_mode_list.count()):
+                n = self._viable_mode_list.item(row).data(Qt.ItemDataRole.UserRole)
+                entry = store.get_entry(n, respect)
+                if entry is None:
+                    continue
+                if (
+                    self._viable_fingerprint is not None
+                    and compare_fingerprints(
+                        store.fingerprint_for(n, respect), self._viable_fingerprint
+                    )
+                    == CacheFreshness.MANDATORY
+                ):
+                    continue
+                entries[n] = entry.plans
+        return entries
+
+    def _update_viable_mode_counts(self) -> None:
+        """With decks in the filter, suffix each calculated size with its matches."""
+        selected = self._viable_filter_deck_ids
+        entries = self._cached_viable_plans_by_mode() if selected else {}
+        for row in range(self._viable_mode_list.count()):
+            item = self._viable_mode_list.item(row)
+            n = item.data(Qt.ItemDataRole.UserRole)
+            label = self._viable_mode_label(n)
+            plans = entries.get(n)
+            if plans is not None:
+                label = self._translator.t("optimize.viable.mode_count").format(
+                    label=label, k=len(filter_plans_containing(plans, selected))
+                )
+            item.setText(label)
 
     def _rebuild_viable_filter_combo(self) -> None:
-        """Populate filter with decks that appear in the current viable set only.
+        """Offer only decks that still co-occur with the decks already picked.
 
-        With no combinations (not calculated / empty), only «All» remains and
-        the combo is disabled so the completer cannot suggest unrelated decks.
+        Suggestions come from every calculated size, not just the one on screen,
+        so a deck can be added from a size where the current pick has no
+        matches. The picked decks survive size / ɸ changes, so only decks that
+        no longer exist are dropped. With nothing left to add the combo is
+        disabled so the completer cannot suggest decks that would empty every
+        size.
         """
-        previous = self._viable_filter_deck_id
-        allowed = deck_ids_appearing_in_plans(self._viable_plans)
+        with get_session() as session:
+            service = DeckService(session)
+            commander_names = service.commander_names_by_deck()
+            self._viable_deck_labels = {
+                deck.id: self._picker_label(
+                    deck.name,
+                    commander_names.get(deck.id),
+                    deck.status == DeckStatus.ARMED,
+                )
+                for deck in service.list_decks()
+            }
+        self._viable_filter_deck_ids = [
+            deck_id
+            for deck_id in self._viable_filter_deck_ids
+            if deck_id in self._viable_deck_labels
+        ]
+        allowed: set[int] = set(
+            co_occurring_deck_ids(self._viable_plans, self._viable_filter_deck_ids)
+        )
+        for plans in self._cached_viable_plans_by_mode().values():
+            allowed.update(
+                co_occurring_deck_ids(plans, self._viable_filter_deck_ids)
+            )
+        typed = self._viable_filter_combo.currentText()
         self._viable_filter_combo.blockSignals(True)
         self._viable_filter_combo.clear()
-        self._viable_filter_combo.addItem(
-            self._translator.t("optimize.viable.filter.all"), None
-        )
-        if allowed:
-            with get_session() as session:
-                service = DeckService(session)
-                commander_names = service.commander_names_by_deck()
-                for deck in service.list_decks():
-                    if deck.id not in allowed:
-                        continue
-                    commander = commander_names.get(deck.id)
-                    label = self._picker_label(
-                        deck.name, commander, deck.status == DeckStatus.ARMED
-                    )
-                    self._viable_filter_combo.addItem(label, deck.id)
+        for deck_id, label in self._viable_deck_labels.items():
+            if deck_id in allowed:
+                self._viable_filter_combo.addItem(label, deck_id)
         completer = self._viable_filter_combo.completer()
         if completer is not None:
             completer.setModel(self._viable_filter_combo.model())
             completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        index = 0
-        if previous is not None and previous in allowed:
-            found = self._viable_filter_combo.findData(previous)
-            if found >= 0:
-                index = found
-            else:
-                self._viable_filter_deck_id = None
-        else:
-            self._viable_filter_deck_id = None
-        self._viable_filter_combo.setCurrentIndex(index)
+        self._viable_filter_combo.setCurrentIndex(-1)
+        self._viable_filter_combo.setEditText(typed if allowed else "")
         self._viable_filter_combo.setEnabled(bool(allowed))
         self._viable_filter_combo.blockSignals(False)
+        self._refresh_viable_filter_chips()
+
+    def _set_viable_filter_chip_texts(self) -> None:
+        self._viable_filter_chips.set_texts(
+            remove_tooltip=self._translator.t("optimize.viable.filter.chip_remove_tip"),
+            clear_text=self._translator.t("optimize.viable.filter.clear"),
+        )
+
+    def _refresh_viable_filter_chips(self) -> None:
+        self._viable_filter_chips.set_chips(
+            [
+                Chip(deck_id, self._viable_deck_labels.get(deck_id, str(deck_id)))
+                for deck_id in self._viable_filter_deck_ids
+            ]
+        )
 
     def _on_viable_mode_changed(self, row: int) -> None:
         if row < 0:
@@ -472,41 +550,65 @@ class OptimizerWidget(QWidget):
         if item is None:
             return
         self._viable_mode_n = item.data(Qt.ItemDataRole.UserRole)
-        # Reset filter: options depend on which decks appear for this N.
-        self._viable_filter_deck_id = None
         if self._section_list.currentRow() == VIABLE_SECTION_INDEX:
             self._load_viable_view()
 
     def _on_viable_options_changed(self) -> None:
-        # ɸ changes which combinations (and deck suggestions) apply.
-        self._viable_filter_deck_id = None
         if self._section_list.currentRow() == VIABLE_SECTION_INDEX:
             self._load_viable_view()
 
-    def _on_viable_filter_changed(self) -> None:
-        self._viable_filter_deck_id = self._selected_viable_filter_deck_id()
-        self._render_viable_results()
+    def _on_viable_filter_activated(self, index: int) -> None:
+        self._add_viable_filter_deck(self._viable_filter_combo.itemData(index))
 
-    def _selected_viable_filter_deck_id(self) -> int | None:
-        typed = self._viable_filter_combo.currentText().strip()
-        index = self._viable_filter_combo.currentIndex()
-        if index == 0 or not typed:
+    def _on_viable_filter_completed(self, text: str) -> None:
+        index = self._viable_filter_combo.findText(
+            text, Qt.MatchFlag.MatchFixedString
+        )
+        if index >= 0:
+            self._add_viable_filter_deck(self._viable_filter_combo.itemData(index))
+
+    def _on_viable_filter_return(self) -> None:
+        self._add_viable_filter_deck(self._typed_viable_filter_deck_id())
+
+    def _typed_viable_filter_deck_id(self) -> int | None:
+        needle = self._viable_filter_combo.currentText().strip().casefold()
+        if not needle:
             return None
-        if index >= 0 and self._viable_filter_combo.itemText(index) == typed:
-            data = self._viable_filter_combo.itemData(index)
-            return data if isinstance(data, int) else None
-        needle = typed.casefold()
-        for i in range(1, self._viable_filter_combo.count()):
-            label = self._viable_filter_combo.itemText(i)
-            data = self._viable_filter_combo.itemData(i)
-            if isinstance(data, int) and label.casefold() == needle:
+        labels = [
+            (self._viable_filter_combo.itemText(i).casefold(),
+             self._viable_filter_combo.itemData(i))
+            for i in range(self._viable_filter_combo.count())
+        ]
+        for label, data in labels:
+            if isinstance(data, int) and label == needle:
                 return data
-        for i in range(1, self._viable_filter_combo.count()):
-            label = self._viable_filter_combo.itemText(i)
-            data = self._viable_filter_combo.itemData(i)
-            if isinstance(data, int) and needle in label.casefold():
+        for label, data in labels:
+            if isinstance(data, int) and needle in label:
                 return data
         return None
+
+    def _add_viable_filter_deck(self, deck_id: object) -> None:
+        if not isinstance(deck_id, int) or deck_id in self._viable_filter_deck_ids:
+            return
+        self._viable_filter_deck_ids.append(deck_id)
+        self._on_viable_filter_selection_changed()
+        # The completer writes the picked label back after its signal fires.
+        QTimer.singleShot(0, lambda: self._viable_filter_combo.setEditText(""))
+
+    def _on_viable_filter_chip_removed(self, deck_id: object) -> None:
+        if deck_id in self._viable_filter_deck_ids:
+            self._viable_filter_deck_ids.remove(deck_id)
+            self._on_viable_filter_selection_changed()
+
+    def _clear_viable_filter(self) -> None:
+        if self._viable_filter_deck_ids:
+            self._viable_filter_deck_ids.clear()
+            self._on_viable_filter_selection_changed()
+
+    def _on_viable_filter_selection_changed(self) -> None:
+        self._rebuild_viable_filter_combo()
+        self._update_viable_mode_counts()
+        self._render_viable_results()
 
     def _current_fingerprint(self) -> CollectionFingerprint:
         with get_session() as session:
@@ -541,6 +643,7 @@ class OptimizerWidget(QWidget):
         """
         respect = self._viable_respect.isChecked()
         fingerprint = self._current_fingerprint()
+        self._viable_fingerprint = fingerprint
         with get_session() as session:
             store = self._viable_cache_store(session)
             freshness = store.freshness_for(
@@ -564,6 +667,7 @@ class OptimizerWidget(QWidget):
             self._viable_truncated = cached.truncated
             self._viable_freshness = freshness
         self._rebuild_viable_filter_combo()
+        self._update_viable_mode_counts()
         self._update_viable_action_button()
         self._render_viable_results()
 
@@ -647,9 +751,14 @@ class OptimizerWidget(QWidget):
                 self._update_viable_action_button()
             return
         fingerprint = self._current_fingerprint()
+        self._viable_fingerprint = fingerprint
         with get_session() as session:
             store = self._viable_cache_store(session)
             store.put_entry(size_n, respect, result, fingerprint)
+        if respect == self._viable_respect.isChecked():
+            self._update_viable_mode_counts()
+            if key != self._viable_current_key():
+                self._rebuild_viable_filter_combo()
         if key != self._viable_current_key():
             return
         self._viable_plans = result.plans
@@ -682,7 +791,7 @@ class OptimizerWidget(QWidget):
 
     def _render_viable_results(self) -> None:
         filtered = filter_plans_containing(
-            self._viable_plans, self._viable_filter_deck_id
+            self._viable_plans, self._viable_filter_deck_ids
         )
         self._viable_shown_plans = filtered
         self._rebuild_viable_tree(filtered)
@@ -698,7 +807,7 @@ class OptimizerWidget(QWidget):
         is_max = self._viable_mode_n is None
         total = len(self._viable_plans)
         shown = len(filtered)
-        filtering = self._viable_filter_deck_id is not None
+        filtering = bool(self._viable_filter_deck_ids)
 
         if self._viable_freshness == CacheFreshness.MANDATORY:
             self._viable_status.setText(
