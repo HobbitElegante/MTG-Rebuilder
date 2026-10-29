@@ -117,6 +117,69 @@ def test_download_images_cached_scope(session: Session, tmp_path: Path) -> None:
     assert status.cached_on_disk == 1
 
 
+def test_status_counts_collection_and_cache(session: Session, tmp_path: Path) -> None:
+    def card(oracle_id: str, uri: str | None) -> Card:
+        return Card(
+            oracle_id=oracle_id,
+            name=oracle_id,
+            image_uri=uri,
+            is_basic_land=False,
+            is_token=False,
+        )
+
+    session.add_all(
+        [
+            card("owned-on-disk", "https://example.test/1.jpg"),
+            card("owned-missing", "https://example.test/2.jpg"),
+            card("owned-no-uri", None),
+            card("cached-on-disk", "https://example.test/3.jpg"),
+            card("cached-back-only", "https://example.test/4.jpg"),
+            card("cached-missing", "https://example.test/5.jpg"),
+        ]
+    )
+    session.add_all(
+        CardCopy(card_id=oid) for oid in ("owned-on-disk", "owned-missing", "owned-no-uri")
+    )
+    session.flush()
+    for name in (
+        "owned-on-disk.jpg",
+        "owned-no-uri.jpg",
+        "cached-on-disk.jpg",
+        "cached-back-only_back.jpg",
+        "not-in-db.jpg",
+        "notes.txt",
+    ):
+        (tmp_path / name).write_bytes(b"x")
+    (tmp_path / "folder.jpg").mkdir()
+
+    status = CardImageService(session, FakeImageClient(), images_dir=tmp_path).status()
+
+    assert status.collection_with_uri == 2
+    assert status.collection_on_disk == 1
+    assert status.cached_with_uri == 5
+    assert status.cached_on_disk == 2
+
+
+def test_status_without_images_dir(session: Session, tmp_path: Path) -> None:
+    session.add(
+        Card(
+            oracle_id="sol",
+            name="Sol Ring",
+            image_uri="https://example.test/sol.jpg",
+            is_basic_land=False,
+            is_token=False,
+        )
+    )
+    session.flush()
+
+    status = CardImageService(
+        session, FakeImageClient(), images_dir=tmp_path / "missing"
+    ).status()
+
+    assert status.cached_with_uri == 1
+    assert status.cached_on_disk == 0
+
+
 def test_image_path_for_back_face(tmp_path: Path) -> None:
     front = image_path_for("oracle-1", tmp_path)
     back = image_path_for("oracle-1", tmp_path, back=True)

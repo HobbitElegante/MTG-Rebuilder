@@ -190,6 +190,7 @@ class BrowseWidget(QWidget):
         self._bulk_status: BulkSyncStatus | None = None
         self._scryfall_busy = False
         self._availability_dirty = True
+        self._scryfall_status_dirty = True
         self._build_ui()
         self.refresh()
 
@@ -354,6 +355,8 @@ class BrowseWidget(QWidget):
         if index == AVAILABILITY_SECTION_INDEX and self._availability_dirty:
             self._refresh_inventory()
         if index == SCRYFALL_SECTION_INDEX:
+            if self._scryfall_status_dirty:
+                self._refresh_scryfall_status()
             self._start_remote_status_check()
 
     def _build_overview_panel(self) -> QWidget:
@@ -1131,6 +1134,11 @@ class BrowseWidget(QWidget):
         )
 
     def _refresh_scryfall_status(self) -> None:
+        """Rebuild the Scryfall panel's status; deferred while that panel is hidden."""
+        if self._section_list.currentRow() != SCRYFALL_SECTION_INDEX:
+            self._scryfall_status_dirty = True
+            return
+        self._scryfall_status_dirty = False
         with get_session() as session:
             status = BrowseService(session).scryfall_status()
             images = CardImageService(session).status()

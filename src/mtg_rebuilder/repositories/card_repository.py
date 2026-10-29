@@ -79,6 +79,13 @@ class CardRepository:
             query = query.order_by(Card.name)
         return list(self._session.scalars(query).all())
 
+    def oracle_ids_with_image_uri(self) -> set[str]:
+        return set(
+            self._session.scalars(
+                select(Card.oracle_id).where(Card.image_uri.is_not(None))
+            ).all()
+        )
+
     def collection_oracle_ids(self) -> list[str]:
         copy_ids = set(self._session.scalars(select(CardCopy.card_id).distinct()).all())
         deck_ids = set(self._session.scalars(select(DeckCard.card_id).distinct()).all())

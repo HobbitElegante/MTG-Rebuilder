@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -11,6 +12,8 @@ from mtg_rebuilder.models import Card
 from mtg_rebuilder.repositories import CardRepository
 from mtg_rebuilder.services.scryfall_service import ScryfallService, card_from_scryfall
 
+IMAGE_SUFFIX = ".jpg"
+BACK_IMAGE_SUFFIX = "_back.jpg"
 
 class ImageDownloadScope(StrEnum):
     COLLECTION = "collection"
@@ -40,8 +43,8 @@ def image_path_for(
     back: bool = False,
 ) -> Path:
     root = images_dir if images_dir is not None else IMAGES_DIR
-    suffix = "_back" if back else ""
-    return root / f"{oracle_id}{suffix}.jpg"
+    suffix = BACK_IMAGE_SUFFIX if back else IMAGE_SUFFIX
+    return root / f"{oracle_id}{suffix}"
 
 
 class CardImageService:
@@ -69,27 +72,37 @@ class CardImageService:
             self._client = None
 
     def status(self) -> ImageCacheStatus:
+        """Front-face image counts, as set arithmetic over ids.
+
+        Runs on the GUI thread against the whole cache (~36k cards), so it reads
+        one column and lists the images directory once rather than loading each
+        ``Card`` and ``stat()``-ing its file.
+        """
         collection_ids = set(ScryfallService(self._session).collection_oracle_ids())
-        cards = self._cards.list_with_image_uri()
-        cached_with_uri = len(cards)
-        cached_on_disk = 0
-        collection_with_uri = 0
-        collection_on_disk = 0
-        for card in cards:
-            on_disk = image_path_for(card.oracle_id, self._images_dir).is_file()
-            if on_disk:
-                cached_on_disk += 1
-            if card.oracle_id in collection_ids:
-                collection_with_uri += 1
-                if on_disk:
-                    collection_on_disk += 1
-        # Collection cards may lack image_uri but still count toward "with uri" only if set.
+        with_uri = self._cards.oracle_ids_with_image_uri()
+        on_disk = with_uri & self._front_image_ids_on_disk()
+        # Collection cards without image_uri are not counted as "with uri".
+        collection_with_uri = with_uri & collection_ids
         return ImageCacheStatus(
-            collection_with_uri=collection_with_uri,
-            collection_on_disk=collection_on_disk,
-            cached_with_uri=cached_with_uri,
-            cached_on_disk=cached_on_disk,
+            collection_with_uri=len(collection_with_uri),
+            collection_on_disk=len(collection_with_uri & on_disk),
+            cached_with_uri=len(with_uri),
+            cached_on_disk=len(on_disk),
         )
+
+    def _front_image_ids_on_disk(self) -> set[str]:
+        try:
+            entries = os.scandir(self._images_dir)
+        except OSError:
+            return set()
+        with entries:
+            return {
+                entry.name[: -len(IMAGE_SUFFIX)]
+                for entry in entries
+                if entry.name.endswith(IMAGE_SUFFIX)
+                and not entry.name.endswith(BACK_IMAGE_SUFFIX)
+                and entry.is_file()
+            }
 
     def has_back_image(self, oracle_id: str) -> bool:
         card = self._cards.get(oracle_id)
