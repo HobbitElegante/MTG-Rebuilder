@@ -47,6 +47,60 @@ def test_parse_strips_set_and_collector_number(line: str, expected_name: str) ->
     assert parsed.quantity == 1
 
 
+def test_moxfield_export_keeps_collector_number_and_foil() -> None:
+    payload = {
+        "publicId": "pub",
+        "name": "Foils",
+        "mainboard": {
+            "Sol Ring": {
+                "quantity": 1,
+                "card": {
+                    "name": "Sol Ring",
+                    "set": "c21",
+                    "cn": "263",
+                    "finish": "foil",
+                },
+            },
+            "Arcane Signet": {
+                "quantity": 1,
+                "card": {"name": "Arcane Signet", "set": "c21", "finish": "nonfoil"},
+            },
+        },
+    }
+    export = deck_export_from_payload(payload)
+    assert "1 Sol Ring (C21) 263 *F*" in export.list_text
+    assert "1 Arcane Signet" in export.list_text
+    parsed = {line.name: line for line in parse_decklist(export.list_text)}
+    assert parsed["Sol Ring"].foil is True
+    assert parsed["Sol Ring"].collector_number == "263"
+    assert parsed["Arcane Signet"].foil is False
+
+
+def test_archidekt_export_keeps_collector_number_and_foil() -> None:
+    payload = {
+        "id": 1,
+        "name": "Numbers",
+        "categories": [{"name": "Land", "includedInDeck": True}],
+        "cards": [
+            {
+                "quantity": 1,
+                "foil": True,
+                "categories": ["Land"],
+                "card": {
+                    "oracleCard": {"name": "Command Tower"},
+                    "edition": {"editioncode": "c21"},
+                    "collectorNumber": "284",
+                },
+            }
+        ],
+    }
+    export = archidekt_export(payload)
+    assert "1 Command Tower (C21) 284 *F*" in export.list_text
+    parsed = parse_decklist(export.list_text)
+    assert parsed[0].collector_number == "284"
+    assert parsed[0].foil is True
+
+
 def test_parse_kellan_deck_export() -> None:
     text = (FIXTURES / "kellan_deck.txt").read_text(encoding="utf-8")
     parsed = parse_decklist(text)

@@ -1,6 +1,6 @@
 from mtg_rebuilder.models.activity import ActivityEvent
 from mtg_rebuilder.models.base import Base
-from mtg_rebuilder.models.card import Card, CardCopy, CardPrint
+from mtg_rebuilder.models.card import Card, CardCopy, CardPrint, CardPrinting
 from mtg_rebuilder.models.deck import CardAssignment, Deck, DeckCard
 from mtg_rebuilder.models.enums import (
     ActivityCategory,
@@ -22,6 +22,7 @@ __all__ = [
     "CardAssignment",
     "CardCopy",
     "CardPrint",
+    "CardPrinting",
     "Deck",
     "DeckCard",
     "DeckCardRole",

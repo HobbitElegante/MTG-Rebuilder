@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from mtg_rebuilder.algorithms.copy_traits import sorted_trait_counts
 from mtg_rebuilder.repositories import (
     CardPrintRepository,
     CardRepository,
@@ -46,6 +47,12 @@ class InventorySummaryRow:
     # (set code or None for unspecified, copies) — only populated when the
     # edition-tracking setting is on.
     editions: tuple[tuple[str | None, int], ...] = ()
+    # Same shape, only when edition tracking is on. Unspecified counts are
+    # included; the formatter omits a field when every copy left it empty.
+    finishes: tuple[tuple[str | None, int], ...] = ()
+    languages: tuple[tuple[str | None, int], ...] = ()
+    conditions: tuple[tuple[str | None, int], ...] = ()
+    collector_numbers: tuple[tuple[str | None, int], ...] = ()
     type_line: str | None = None
     colors: str | None = None
     cmc: float | None = None
@@ -62,6 +69,8 @@ class InventorySummaryRow:
     is_token: bool = False
     # Deck ids that currently hold a physical copy of this card.
     assigned_deck_ids: frozenset[int] = frozenset()
+    # Scryfall id of the printed copy updated last. The side preview uses it.
+    preview_printing_id: str | None = None
 
 
 def _sorted_editions(
@@ -141,6 +150,8 @@ class BrowseService:
         self, *, include_editions: bool = False
     ) -> list[InventorySummaryRow]:
         edition_counts = self._copies.edition_counts() if include_editions else {}
+        preview_printings = self._copies.latest_printing_ids()
+        traits = self._copies.trait_counts() if include_editions else None
         raw_rows = list(self._decks.inventory_copy_rows())
         assigned_counts = self._copies.assigned_counts()
         decks_by_card = self._decks.assignment_decks_by_card()
@@ -166,6 +177,17 @@ class BrowseService:
             is_token,
         ) in raw_rows:
             editions = _sorted_editions(edition_counts.get(oracle_id, {}))
+            finishes: tuple[tuple[str | None, int], ...] = ()
+            languages: tuple[tuple[str | None, int], ...] = ()
+            conditions: tuple[tuple[str | None, int], ...] = ()
+            collector_numbers: tuple[tuple[str | None, int], ...] = ()
+            if traits is not None:
+                finishes = sorted_trait_counts(traits.finishes.get(oracle_id, {}))
+                languages = sorted_trait_counts(traits.languages.get(oracle_id, {}))
+                conditions = sorted_trait_counts(traits.conditions.get(oracle_id, {}))
+                collector_numbers = sorted_trait_counts(
+                    traits.collector_numbers.get(oracle_id, {})
+                )
             assigned_count = assigned_counts.get(oracle_id, 0)
             deck_entries = decks_by_card.get(oracle_id, ())
             summaries.append(
@@ -177,6 +199,10 @@ class BrowseService:
                     assigned_decks=tuple(deck_name for _id, deck_name in deck_entries),
                     color_identity=color_identity,
                     editions=editions,
+                    finishes=finishes,
+                    languages=languages,
+                    conditions=conditions,
+                    collector_numbers=collector_numbers,
                     type_line=type_line,
                     colors=colors,
                     cmc=cmc,
@@ -196,6 +222,7 @@ class BrowseService:
                     assigned_deck_ids=frozenset(
                         deck_id for deck_id, _name in deck_entries
                     ),
+                    preview_printing_id=preview_printings.get(oracle_id),
                 )
             )
         return summaries

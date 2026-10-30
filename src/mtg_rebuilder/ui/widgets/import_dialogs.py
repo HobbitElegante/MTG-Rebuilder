@@ -51,7 +51,9 @@ from mtg_rebuilder.services.import_service import (
     DeckListChange,
     DeckListUpdatePreview,
     InventoryListCard,
+    PrintPlacement,
     TrackableDeckCard,
+    format_print_placement,
 )
 from mtg_rebuilder.ui.combo import configure_data_combo
 from mtg_rebuilder.ui.inventory_display import format_card_legality_tooltip
@@ -749,6 +751,8 @@ class EditableInventoryListLine:
     list_quantity: int
     add_quantity: int
     set_code: str | None = None
+    finish: str | None = None
+    collector_number: str | None = None
 
 
 class AddInventoryListDialog(QDialog):
@@ -770,6 +774,8 @@ class AddInventoryListDialog(QDialog):
                 list_quantity=card.list_quantity,
                 add_quantity=min(1, card.list_quantity),
                 set_code=card.set_code,
+                finish=card.finish,
+                collector_number=card.collector_number,
             )
             for card in identified
         ]
@@ -963,6 +969,12 @@ class AddInventoryListDialog(QDialog):
                     max(line.add_quantity, 1),
                     line.list_quantity,
                 )
+                if line.set_code != card.set_code:
+                    line.set_code = None
+                if line.finish != card.finish:
+                    line.finish = None
+                if line.collector_number != card.collector_number:
+                    line.collector_number = None
                 return
         self._lines.append(
             EditableInventoryListLine(
@@ -971,6 +983,8 @@ class AddInventoryListDialog(QDialog):
                 list_quantity=card.list_quantity,
                 add_quantity=min(1, card.list_quantity),
                 set_code=card.set_code,
+                finish=card.finish,
+                collector_number=card.collector_number,
             )
         )
         self._lines.sort(key=lambda entry: entry.name.casefold())
@@ -1087,6 +1101,20 @@ class AddInventoryListDialog(QDialog):
     def set_codes(self) -> dict[str, str | None]:
         return {
             line.oracle_id: line.set_code
+            for line in self._lines
+            if line.add_quantity > 0
+        }
+
+    def finishes(self) -> dict[str, str | None]:
+        return {
+            line.oracle_id: line.finish
+            for line in self._lines
+            if line.add_quantity > 0
+        }
+
+    def collector_numbers(self) -> dict[str, str | None]:
+        return {
+            line.oracle_id: line.collector_number
             for line in self._lines
             if line.add_quantity > 0
         }
@@ -1413,6 +1441,82 @@ class CardPickDialog(QDialog):
 
     def result(self) -> CardPickResult | None:
         return self._result
+
+
+class PrintPlacementDialog(QDialog):
+    """Ask which listed printings are new copies and which are already owned.
+
+    The stepper starts at 0. Leaving it there keeps those copies as the ones
+    already in inventory and does not write the list's set, number, or foil
+    onto them.
+    """
+
+    def __init__(
+        self,
+        translator: Translator,
+        placements: list[PrintPlacement],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._translator = translator
+        self._placements = placements
+        self._steppers: list[QuantityStepper] = []
+        self.setWindowTitle(translator.t("decks.update.prints.title"))
+        self.resize(760, 420)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        hint = QLabel(self._translator.t("decks.update.prints.hint"))
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._table = QTableWidget(len(self._placements), 4)
+        self._table.setHorizontalHeaderLabels(
+            [
+                self._translator.t("browse.cards.name"),
+                self._translator.t("decks.update.prints.details"),
+                self._translator.t("decks.import.available.in_list"),
+                self._translator.t("decks.update.prints.new"),
+            ]
+        )
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        for row, placement in enumerate(self._placements):
+            self._table.setItem(row, 0, QTableWidgetItem(placement.name))
+            self._table.setItem(row, 1, QTableWidgetItem(format_print_placement(placement)))
+            listed = QTableWidgetItem(str(placement.quantity))
+            listed.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, 2, listed)
+            stepper = QuantityStepper(placement.quantity, compact=True)
+            stepper.setValue(0)
+            self._steppers.append(stepper)
+            self._table.setCellWidget(row, 3, stepper)
+
+        layout.addWidget(self._table)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if ok is not None:
+            ok.setText(self._translator.t("decks.update.prints.continue"))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def new_copies(self) -> list[tuple[PrintPlacement, int]]:
+        """How many of each printing the user marked as new. Zeros are omitted."""
+        return [
+            (placement, stepper.value())
+            for placement, stepper in zip(self._placements, self._steppers, strict=True)
+            if stepper.value() > 0
+        ]
 
 
 class DeckEditDialog(QDialog):

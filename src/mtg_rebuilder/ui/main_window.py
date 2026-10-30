@@ -84,6 +84,7 @@ class MainWindow(QMainWindow):
 
     def _on_track_editions_changed(self, enabled: bool) -> None:
         self._inventory.set_track_editions(enabled)
+        self._decks.set_track_editions(enabled)
         self._optimizer.set_track_editions(enabled)
 
     def _refresh_from_browse(self) -> None:

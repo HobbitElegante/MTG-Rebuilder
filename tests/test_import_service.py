@@ -243,6 +243,84 @@ def test_preview_inventory_list_empty_unresolved_when_all_resolve(
     assert preview.unresolved_lines == []
 
 
+def test_preview_inventory_list_keeps_foil_and_number_when_lines_agree(
+    session: Session,
+) -> None:
+    session.add(
+        Card(oracle_id="sol", name="Sol Ring", is_basic_land=False, is_token=False)
+    )
+    session.flush()
+    text = "1 Sol Ring (C21) 263 *F*\n1 Sol Ring (C21) 263 *F*"
+
+    card = ImportService(session, _StrictFakeScryfall(session)).preview_inventory_list(
+        text
+    ).identified[0]
+
+    assert card.list_quantity == 2
+    assert card.set_code == "C21"
+    assert card.finish == "foil"
+    assert card.collector_number == "263"
+
+
+def test_preview_inventory_list_drops_print_facts_that_disagree(
+    session: Session,
+) -> None:
+    session.add(
+        Card(oracle_id="sol", name="Sol Ring", is_basic_land=False, is_token=False)
+    )
+    session.flush()
+    text = "1 Sol Ring (C21) 263 *F*\n1 Sol Ring (C21) 264"
+
+    card = ImportService(session, _StrictFakeScryfall(session)).preview_inventory_list(
+        text
+    ).identified[0]
+
+    assert card.list_quantity == 2
+    assert card.set_code == "C21"
+    assert card.finish is None
+    assert card.collector_number is None
+
+
+def test_import_without_foil_does_not_clear_a_recorded_finish(
+    session: Session,
+) -> None:
+    session.add(
+        Card(oracle_id="sol", name="Sol Ring", is_basic_land=False, is_token=False)
+    )
+    session.flush()
+    existing = InventoryService(session).add_copy(
+        "sol", finish="foil", record_activity=False
+    )[0]
+    importer = ImportService(session, _StrictFakeScryfall(session))
+
+    importer.apply_available_copies({"sol": 1}, finishes={"sol": None})
+
+    copies = list(session.scalars(select(CardCopy).order_by(CardCopy.id)))
+    assert existing.finish == "foil"
+    assert len(copies) == 2
+    assert copies[1].finish is None
+    assert copies[1].foil is False
+
+
+def test_later_import_without_a_number_does_not_clear_the_old_one(
+    session: Session,
+) -> None:
+    session.add(
+        Card(oracle_id="sol", name="Sol Ring", is_basic_land=False, is_token=False)
+    )
+    session.flush()
+    existing = InventoryService(session).add_copy(
+        "sol", collector_number="263", record_activity=False
+    )[0]
+    importer = ImportService(session, _StrictFakeScryfall(session))
+
+    importer.apply_available_copies({"sol": 1}, collector_numbers={"sol": None})
+
+    copies = list(session.scalars(select(CardCopy).order_by(CardCopy.id)))
+    assert existing.collector_number == "263"
+    assert copies[1].collector_number is None
+
+
 def test_preview_deck_list_update_reports_added_removed_and_unresolved(
     session: Session,
 ) -> None:
@@ -301,6 +379,113 @@ def test_preview_deck_list_update_builds_edit_rows_with_inventory(
     assert by_id["sol"].free_copies == 2
     assert by_id["vihaan"].role == DeckCardRole.COMMANDER
     assert by_id["vihaan"].free_copies == 0
+
+
+def test_deck_update_asks_when_the_list_has_print_facts_the_copies_lack(
+    session: Session,
+) -> None:
+    _add_cards(session, [("sol", "Sol Ring")])
+    deck = _add_deck(session, "Vihaan", [("sol", 1)])
+    owned = InventoryService(session).add_copy("sol", record_activity=False)[0]
+
+    preview = ImportService(session, _StrictFakeScryfall(session)).preview_deck_list_update(
+        deck.id,
+        "1 Sol Ring (C21) 263 *F*",
+    )
+
+    assert len(preview.print_placements) == 1
+    placement = preview.print_placements[0]
+    assert placement.oracle_id == "sol"
+    assert placement.quantity == 1
+    assert placement.set_code == "C21"
+    assert placement.finish == "foil"
+    assert placement.collector_number == "263"
+    assert preview.edit_rows[0].quantity == 1
+    assert owned.finish is None
+    assert owned.edition is None
+
+
+def test_deck_update_skips_the_question_without_owned_copies_or_new_facts(
+    session: Session,
+) -> None:
+    _add_cards(session, [("sol", "Sol Ring")])
+    deck = _add_deck(session, "Vihaan", [("sol", 1)])
+
+    bare = ImportService(session, _StrictFakeScryfall(session)).preview_deck_list_update(
+        deck.id,
+        "1 Sol Ring (C21) 263 *F*",
+    )
+    assert bare.print_placements == []
+
+    InventoryService(session).add_copy(
+        "sol",
+        edition="C21",
+        finish="foil",
+        collector_number="263",
+        record_activity=False,
+    )
+    recorded = ImportService(
+        session, _StrictFakeScryfall(session)
+    ).preview_deck_list_update(
+        deck.id,
+        "1 Sol Ring (C21) 263 *F*",
+    )
+    assert recorded.print_placements == []
+
+    plain = ImportService(session, _StrictFakeScryfall(session)).preview_deck_list_update(
+        deck.id,
+        "1 Sol Ring",
+    )
+    assert plain.print_placements == []
+
+
+def test_deck_update_counts_only_copies_the_list_does_not_already_match(
+    session: Session,
+) -> None:
+    _add_cards(session, [("sol", "Sol Ring")])
+    deck = _add_deck(session, "Vihaan", [("sol", 1)])
+    InventoryService(session).add_copy(
+        "sol",
+        edition="C21",
+        finish="foil",
+        collector_number="263",
+        record_activity=False,
+    )
+    InventoryService(session).add_copy("sol", record_activity=False)
+
+    preview = ImportService(session, _StrictFakeScryfall(session)).preview_deck_list_update(
+        deck.id,
+        "2 Sol Ring (C21) 263 *F*\n1 Sol Ring (LTC) 457 *F*",
+    )
+
+    by_set = {item.set_code: item.quantity for item in preview.print_placements}
+    assert by_set == {"C21": 1, "LTC": 1}
+
+
+def test_confirmed_new_print_copies_do_not_edit_the_ones_already_owned(
+    session: Session,
+) -> None:
+    _add_cards(session, [("sol", "Sol Ring")])
+    deck = _add_deck(session, "Vihaan", [("sol", 1)])
+    owned = InventoryService(session).add_copy("sol", record_activity=False)[0]
+    importer = ImportService(session, _StrictFakeScryfall(session))
+    placement = importer.preview_deck_list_update(
+        deck.id,
+        "1 Sol Ring (C21) 263 *F*",
+    ).print_placements[0]
+
+    assert importer.add_confirmed_print_copies([]) == 0
+    assert importer.add_confirmed_print_copies([(placement, 1)]) == 1
+
+    copies = list(session.scalars(select(CardCopy).order_by(CardCopy.id)))
+    assert len(copies) == 2
+    assert copies[0].id == owned.id
+    assert copies[0].edition is None
+    assert copies[0].finish is None
+    assert copies[0].collector_number is None
+    assert copies[1].edition == "C21"
+    assert copies[1].finish == "foil"
+    assert copies[1].collector_number == "263"
 
 
 def test_preview_deck_list_update_without_changes(session: Session) -> None:

@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from mtg_rebuilder.algorithms.card_utils import is_basic_land_name
 from mtg_rebuilder.api.archidekt_client import fetch_archidekt_deck
 from mtg_rebuilder.api.moxfield_client import fetch_moxfield_deck
-from mtg_rebuilder.models import Card, Deck, DeckCard
+from mtg_rebuilder.models import Card, CardCopy, Deck, DeckCard
 from mtg_rebuilder.models.enums import (
     ActivityEventType,
     DeckCardRole,
@@ -68,8 +71,12 @@ class InventoryListCard:
     oracle_id: str
     name: str
     list_quantity: int
-    # Set code from the pasted line, when it carried one.
+    # Set code from the pasted line, when every line for this card agreed.
     set_code: str | None = None
+    # ``foil`` only when every line carried ``*F*``. Missing ``*F*`` stays None.
+    finish: str | None = None
+    # Collector number when every line for this card agreed.
+    collector_number: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +112,9 @@ class DeckListUpdatePreview:
     total_after: int
     unresolved_lines: list[str]
     edit_rows: list[DeckEditRow] = field(default_factory=list)
+    # List printings that no current copy already records. Empty unless the
+    # user already owns that card and the list adds set, foil, or number.
+    print_placements: list[PrintPlacement] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
@@ -121,6 +131,138 @@ class ResolvedDecklistInput:
     commander_name: str | None = None
     secondary_role: DeckCardRole | None = None
     secondary_name: str | None = None
+
+
+def _agree(left: str | None, right: str | None) -> str | None:
+    """Keep a print fact only when both lines carried the same value."""
+    if left == right:
+        return left
+    return None
+
+
+@dataclass(frozen=True)
+class PrintPlacement:
+    """One printing on a deck list that inventory copies do not already record.
+
+    ``quantity`` is how many of these are still unexplained: a copy counts as
+    already recorded only when it has every fact the line states. The user
+    then says how many of that remainder are new physical copies. The rest
+    are treated as copies already in inventory, and those rows are not edited.
+    """
+
+    oracle_id: str
+    name: str
+    quantity: int
+    set_code: str | None = None
+    finish: str | None = None
+    collector_number: str | None = None
+
+
+def format_print_placement(placement: PrintPlacement) -> str:
+    """Short label for the facts the list added, e.g. ``C21 263 foil``."""
+    parts: list[str] = []
+    if placement.set_code:
+        parts.append(placement.set_code)
+    if placement.collector_number:
+        parts.append(placement.collector_number)
+    if placement.finish:
+        parts.append(placement.finish)
+    return " ".join(parts)
+
+
+def _copy_covers_printing(
+    edition: str | None,
+    finish: str | None,
+    collector_number: str | None,
+    set_code: str | None,
+    listed_finish: str | None,
+    listed_collector: str | None,
+) -> bool:
+    """True when the copy already has every fact this list line states."""
+    if set_code is not None and edition != set_code:
+        return False
+    if listed_finish is not None and finish != listed_finish:
+        return False
+    if listed_collector is not None and collector_number != listed_collector:
+        return False
+    return True
+
+
+def ambiguous_print_placements(
+    lines: list[tuple[str, str, int, str | None, str | None, str | None]],
+    copies: list[tuple[str, str | None, str | None, str | None]],
+) -> list[PrintPlacement]:
+    """Printings to ask about when a deck list is applied.
+
+    ``lines`` are ``(oracle_id, name, quantity, set_code, finish, collector)``.
+    ``copies`` are ``(oracle_id, edition, finish, collector_number)``.
+
+    Lines with no set, foil, or number are skipped. A card with no physical
+    copies is skipped too: nothing in inventory could be the same card, so
+    the list update does not invent copies from the printing. Each copy can
+    cover only one listed copy, and more specific printings are matched first.
+    """
+    grouped: dict[tuple[str, str | None, str | None, str | None], int] = {}
+    names: dict[str, str] = {}
+    for oracle_id, name, quantity, set_code, finish, collector in lines:
+        if quantity <= 0:
+            continue
+        if set_code is None and finish is None and collector is None:
+            continue
+        names[oracle_id] = name
+        key = (oracle_id, set_code, finish, collector)
+        grouped[key] = grouped.get(key, 0) + quantity
+
+    pool: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
+    for oracle_id, edition, finish, collector in copies:
+        pool.setdefault(oracle_id, []).append((edition, finish, collector))
+
+    def specificity(
+        key: tuple[str, str | None, str | None, str | None],
+    ) -> int:
+        return sum(part is not None for part in key[1:])
+
+    placements: list[PrintPlacement] = []
+    for oracle_id in sorted(names, key=lambda card_id: names[card_id].casefold()):
+        owned = pool.get(oracle_id, [])
+        if not owned:
+            continue
+        used = [False] * len(owned)
+        keys = sorted(
+            (key for key in grouped if key[0] == oracle_id),
+            key=lambda key: (
+                -specificity(key),
+                key[1] or "",
+                key[3] or "",
+                key[2] or "",
+            ),
+        )
+        for key in keys:
+            _oracle_id, set_code, finish, collector = key
+            needed = grouped[key]
+            matched = 0
+            for index, (edition, copy_finish, copy_collector) in enumerate(owned):
+                if used[index] or matched >= needed:
+                    continue
+                if _copy_covers_printing(
+                    edition, copy_finish, copy_collector, set_code, finish, collector
+                ):
+                    used[index] = True
+                    matched += 1
+            remaining = needed - matched
+            if remaining <= 0:
+                continue
+            placements.append(
+                PrintPlacement(
+                    oracle_id=oracle_id,
+                    name=names[oracle_id],
+                    quantity=remaining,
+                    set_code=set_code,
+                    finish=finish,
+                    collector_number=collector,
+                )
+            )
+    return placements
 
 
 class ImportService:
@@ -200,6 +342,7 @@ class ImportService:
             if is_basic_land_name(parsed.name) or card.is_basic_land or card.is_token:
                 continue
 
+            finish = "foil" if parsed.foil else None
             existing = merged.get(card.oracle_id)
             if existing is None:
                 merged[card.oracle_id] = InventoryListCard(
@@ -207,20 +350,23 @@ class ImportService:
                     name=card.name,
                     list_quantity=parsed.quantity,
                     set_code=parsed.set_code,
+                    finish=finish,
+                    collector_number=parsed.collector_number,
                 )
             else:
-                # Same card listed twice with different sets: the edition is
-                # ambiguous, so drop it rather than guess.
-                set_code = (
-                    existing.set_code
-                    if existing.set_code == parsed.set_code
-                    else None
-                )
+                # Same card listed twice with different print facts: that
+                # field is ambiguous, so drop it rather than guess. Quantity
+                # still adds. A line without ``*F*`` does not mean nonfoil,
+                # but it also does not agree with a line that has ``*F*``.
                 merged[card.oracle_id] = InventoryListCard(
                     oracle_id=card.oracle_id,
                     name=card.name,
                     list_quantity=existing.list_quantity + parsed.quantity,
-                    set_code=set_code,
+                    set_code=_agree(existing.set_code, parsed.set_code),
+                    finish=_agree(existing.finish, finish),
+                    collector_number=_agree(
+                        existing.collector_number, parsed.collector_number
+                    ),
                 )
 
         unresolved.extend(self._unparsed_lines(body, fmt, parsed_lines))
@@ -251,6 +397,9 @@ class ImportService:
         after: dict[str, int] = {}
         names: dict[str, str] = {}
         unresolved: list[str] = []
+        print_lines: list[
+            tuple[str, str, int, str | None, str | None, str | None]
+        ] = []
         for line in parsed_lines:
             try:
                 card = self._scryfall.fetch_and_cache(
@@ -274,6 +423,19 @@ class ImportService:
             after[card.oracle_id] = after.get(card.oracle_id, 0) + line.quantity
             after_cards[card.oracle_id] = card
             names[card.oracle_id] = card.name
+            if not card.is_basic_land:
+                listed_finish = "foil" if line.foil else None
+                if line.set_code or listed_finish or line.collector_number:
+                    print_lines.append(
+                        (
+                            card.oracle_id,
+                            card.name,
+                            line.quantity,
+                            line.set_code,
+                            listed_finish,
+                            line.collector_number,
+                        )
+                    )
 
         unresolved.extend(
             self._unparsed_lines(resolved.text, resolved.format, parsed_lines)
@@ -302,6 +464,23 @@ class ImportService:
             )
             (added if new > old else removed).append(change)
 
+        listed_ids = {oracle_id for oracle_id, *_rest in print_lines}
+        copy_rows = (
+            [
+                (
+                    copy.card_id,
+                    copy.edition,
+                    copy.finish,
+                    copy.collector_number,
+                )
+                for copy in self._session.scalars(
+                    select(CardCopy).where(CardCopy.card_id.in_(listed_ids))
+                )
+            ]
+            if listed_ids
+            else []
+        )
+
         return DeckListUpdatePreview(
             text=resolved.text,
             deck_name=resolved.deck_name,
@@ -314,6 +493,7 @@ class ImportService:
             total_after=sum(after.values()),
             unresolved_lines=unresolved,
             edit_rows=self._edit_rows_for_update(deck_id, after_roles, after_cards),
+            print_placements=ambiguous_print_placements(print_lines, copy_rows),
         )
 
     def _promote_commander_plan(
@@ -563,11 +743,44 @@ class ImportService:
             )
         return sorted(cards, key=lambda entry: entry.name.casefold())
 
+    def add_confirmed_print_copies(
+        self,
+        choices: list[tuple[PrintPlacement, int]],
+    ) -> int:
+        """Create copies the user marked as new during a deck-list update.
+
+        Does not edit copies that already exist. A count of zero adds nothing:
+        those listed copies are the ones already in inventory, and their
+        details stay as they were. Counts above the asked quantity are capped.
+        """
+        inventory = InventoryService(self._session)
+        added = 0
+        for placement, count in choices:
+            if count <= 0:
+                continue
+            creating = min(count, placement.quantity)
+            inventory.add_copy(
+                placement.oracle_id,
+                creating,
+                edition=placement.set_code,
+                finish=placement.finish,
+                collector_number=placement.collector_number,
+            )
+            added += creating
+        return added
+
     def apply_available_copies(
         self,
         quantities: dict[str, int],
         editions: dict[str, str | None] | None = None,
+        finishes: dict[str, str | None] | None = None,
+        collector_numbers: dict[str, str | None] | None = None,
     ) -> int:
+        """Create new free copies. Does not update copies that already exist.
+
+        Empty finish or collector number on this call leaves those fields
+        empty on the new rows and does not clear them on older rows.
+        """
         inventory = InventoryService(self._session)
         added = 0
         for oracle_id, quantity in quantities.items():
@@ -577,6 +790,8 @@ class ImportService:
                 oracle_id,
                 quantity,
                 edition=(editions or {}).get(oracle_id),
+                finish=(finishes or {}).get(oracle_id),
+                collector_number=(collector_numbers or {}).get(oracle_id),
                 record_activity=True,
             )
             added += quantity

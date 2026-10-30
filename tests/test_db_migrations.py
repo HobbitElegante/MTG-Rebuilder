@@ -47,6 +47,43 @@ def legacy_engine(tmp_path: Path):
         conn.execute(
             text("INSERT INTO decks (id, name, status) VALUES (2, 'Alpha', 'ARMED')")
         )
+        conn.execute(
+            text(
+                "CREATE TABLE card_copies ("
+                "id INTEGER PRIMARY KEY, "
+                "card_id VARCHAR(36) NOT NULL, "
+                "edition VARCHAR(16), language VARCHAR(8), "
+                "foil BOOLEAN NOT NULL, condition VARCHAR(32), location VARCHAR(128))"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE deck_cards ("
+                "id INTEGER PRIMARY KEY, "
+                "deck_id INTEGER NOT NULL, "
+                "card_id VARCHAR(36) NOT NULL, "
+                "quantity INTEGER NOT NULL, "
+                "role VARCHAR(10) NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE card_assignments ("
+                "id INTEGER PRIMARY KEY, "
+                "card_copy_id INTEGER NOT NULL, "
+                "deck_id INTEGER NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO card_copies (id, card_id, foil) VALUES (1, 'a', 1)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO card_copies (id, card_id, foil) VALUES (2, 'a', 0)"
+            )
+        )
     return engine
 
 
@@ -58,11 +95,27 @@ def _card_columns(engine) -> set[str]:
         }
 
 
+def _copy_columns(engine) -> set[str]:
+    with engine.begin() as conn:
+        return {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(card_copies)")).fetchall()
+        }
+
+
 def _deck_columns(engine) -> set[str]:
     with engine.begin() as conn:
         return {
             row[1]
             for row in conn.execute(text("PRAGMA table_info(decks)")).fetchall()
+        }
+
+
+def _index_names(engine, table: str) -> set[str]:
+    with engine.begin() as conn:
+        return {
+            row[1]
+            for row in conn.execute(text(f"PRAGMA index_list({table})")).fetchall()
         }
 
 
@@ -93,6 +146,23 @@ def test_fresh_database_runs_initial_migration(tmp_path: Path) -> None:
     assert "commander_legality" in _card_columns(engine)
     assert "sort_order" in _deck_columns(engine)
     assert "format" in _deck_columns(engine)
+    assert "ix_card_copies_card_id" in _index_names(engine, "card_copies")
+    assert {"finish", "collector_number", "printing_id", "updated_at"} <= _copy_columns(
+        engine
+    )
+    assert "card_printings" in tables
+    assert "image_uri" in {
+        col["name"] for col in inspect(engine).get_columns("card_printings")
+    }
+    assert not any("oracle" in name for name in _index_names(engine, "card_printings"))
+    assert not any(
+        token in name
+        for name in _index_names(engine, "card_copies")
+        for token in ("finish", "collector", "printing")
+    )
+    assert "ix_deck_cards_card_id" in _index_names(engine, "deck_cards")
+    assert "ix_card_assignments_deck_id" in _index_names(engine, "card_assignments")
+    assert {"ix_decks_status", "ix_decks_sort_order"} <= _index_names(engine, "decks")
 
 
 def test_legacy_database_is_bridged_and_stamped(legacy_engine) -> None:
@@ -139,3 +209,19 @@ def test_legacy_database_receives_migrations_past_the_baseline(legacy_engine) ->
     assert "rarity" in {
         col["name"] for col in inspect(legacy_engine).get_columns("card_prints")
     }
+    assert "ix_card_copies_card_id" in _index_names(legacy_engine, "card_copies")
+    assert "ix_decks_status" in _index_names(legacy_engine, "decks")
+    assert {"finish", "collector_number", "printing_id", "updated_at"} <= _copy_columns(
+        legacy_engine
+    )
+    assert "card_printings" in set(inspect(legacy_engine).get_table_names())
+    with legacy_engine.begin() as conn:
+        finishes = {
+            copy_id: finish
+            for copy_id, finish in conn.execute(
+                text("SELECT id, finish FROM card_copies ORDER BY id")
+            ).fetchall()
+        }
+    # The old foil flag defaulted to false for every copy. Only an explicit
+    # true becomes a recorded foil; false stays unspecified.
+    assert finishes == {1: "foil", 2: None}

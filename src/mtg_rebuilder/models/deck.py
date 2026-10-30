@@ -14,13 +14,16 @@ class Deck(Base):
         Enum(DeckStatus, native_enum=False),
         default=DeckStatus.DISMANTLED,
         nullable=False,
+        index=True,
     )
     format: Mapped[DeckFormat] = mapped_column(
         Enum(DeckFormat, native_enum=False),
         default=DeckFormat.COMMANDER,
         nullable=False,
     )
-    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, index=True
+    )
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     cards: Mapped[list["DeckCard"]] = relationship(
@@ -41,7 +44,9 @@ class DeckCard(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     deck_id: Mapped[int] = mapped_column(ForeignKey("decks.id"), nullable=False)
-    card_id: Mapped[str] = mapped_column(ForeignKey("cards.oracle_id"), nullable=False)
+    card_id: Mapped[str] = mapped_column(
+        ForeignKey("cards.oracle_id"), index=True, nullable=False
+    )
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     role: Mapped[DeckCardRole] = mapped_column(
         Enum(DeckCardRole, native_enum=False),
@@ -62,7 +67,9 @@ class CardAssignment(Base):
         unique=True,
         nullable=False,
     )
-    deck_id: Mapped[int] = mapped_column(ForeignKey("decks.id"), nullable=False)
+    deck_id: Mapped[int] = mapped_column(
+        ForeignKey("decks.id"), index=True, nullable=False
+    )
 
     card_copy: Mapped["CardCopy"] = relationship(back_populates="assignment")
     deck: Mapped["Deck"] = relationship(back_populates="assignments")

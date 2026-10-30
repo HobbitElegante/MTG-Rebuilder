@@ -68,6 +68,7 @@ from mtg_rebuilder.ui.widgets.import_dialogs import (
     DeckDetailsDialog,
     DeckEditDialog,
     DeleteDeckDialog,
+    PrintPlacementDialog,
     ExportDeckDialog,
     ImportStatusDialog,
     deck_format_from_combo,
@@ -231,6 +232,8 @@ class DecksWidget(QWidget):
         self._group_cards_by_type = False
         self._deck_card_rows: list[DeckCardSummary] = []
         self._card_stock: dict[str, CardListStock] = {}
+        self._printing_ids: dict[str, str] = {}
+        self._card_traits: dict[str, str] = {}
         # Heavy list load waits until Mazos is shown (Browse is the startup tab).
         self._decks_loaded = False
         self._needs_reload = False
@@ -238,7 +241,9 @@ class DecksWidget(QWidget):
         self._update_deck_id: int | None = None
         self._update_deck_name = ""
         with get_session() as session:
-            self._show_card_images = SettingsService(session).get_show_card_images()
+            settings = SettingsService(session)
+            self._show_card_images = settings.get_show_card_images()
+            self._track_editions = settings.get_track_editions()
         self._build_ui()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 (Qt override)
@@ -250,6 +255,12 @@ class DecksWidget(QWidget):
         self._show_card_images = enabled
         self._commander_preview.setVisible(enabled)
         self._card_preview.setVisible(enabled)
+
+    def set_track_editions(self, enabled: bool) -> None:
+        self._track_editions = enabled
+        deck_id = self._selected_deck_id()
+        if self._decks_loaded and deck_id is not None:
+            self._load_deck_cards(deck_id)
 
     def retranslate(self) -> None:
         self._decks_group.setTitle(self._translator.t("decks.list.title"))
@@ -903,6 +914,8 @@ class DecksWidget(QWidget):
         self._commander_column.set_stats(None)
         self._card_preview.clear()
         self._card_stock = {}
+        self._card_traits = {}
+        self._printing_ids = {}
         self._deck_card_rows = []
         self._render_card_stock(None)
         self._deck_cards.blockSignals(True)
@@ -928,16 +941,27 @@ class DecksWidget(QWidget):
             cards = service.deck_card_summaries(deck_id)
             zone = service.command_zone_cards(deck_id)
             stats = service.deck_statistics(deck_id)
-            stock = service.card_list_stock(card.oracle_id for card in cards)
+            oracle_ids = [card.oracle_id for card in cards]
+            stock = service.card_list_stock(oracle_ids)
+            traits = (
+                service.copy_trait_lines(oracle_ids) if self._track_editions else {}
+            )
+            printing_ids = service.latest_printing_ids(oracle_ids)
 
         self._commander_column.set_stats(stats)
         if zone:
-            self._commander_preview.set_card(zone[0][0], zone[0][1])
+            self._commander_preview.set_card(
+                zone[0][0],
+                zone[0][1],
+                printing_id=printing_ids.get(zone[0][0]),
+            )
         else:
             self._commander_preview.clear()
 
         self._deck_card_rows = cards
         self._card_stock = stock
+        self._card_traits = traits
+        self._printing_ids = printing_ids
         self._render_deck_cards(select_oracle=zone[0][0] if zone else None)
 
     def _make_group_header_item(self, group: str) -> QListWidgetItem:
@@ -1034,7 +1058,11 @@ class DecksWidget(QWidget):
             self._card_preview.clear()
             self._render_card_stock(None)
             return
-        self._card_preview.set_card(oracle_id, name if isinstance(name, str) else "")
+        self._card_preview.set_card(
+            oracle_id,
+            name if isinstance(name, str) else "",
+            printing_id=self._printing_ids.get(oracle_id),
+        )
         self._render_card_stock(oracle_id)
 
     def _render_card_stock(self, oracle_id: str | None) -> None:
@@ -1053,6 +1081,7 @@ class DecksWidget(QWidget):
                 stock,
                 self._translator,
                 is_basic_land=card.is_basic_land,
+                traits=self._card_traits.get(oracle_id) if self._track_editions else None,
             )
         )
         self._card_stock_label.setToolTip(
@@ -1359,6 +1388,17 @@ class DecksWidget(QWidget):
             )
             return
 
+        new_prints: list = []
+        if self._track_editions and preview.print_placements:
+            prints = PrintPlacementDialog(
+                self._translator,
+                preview.print_placements,
+                self,
+            )
+            if prints.exec() != QDialog.DialogCode.Accepted:
+                return
+            new_prints = prints.new_copies()
+
         dialog = DeckEditDialog(
             self._translator,
             deck_name,
@@ -1385,14 +1425,18 @@ class DecksWidget(QWidget):
         try:
             with get_session() as session:
                 service = DeckService(session)
-                service.apply_deck_edit(
-                    deck_id,
-                    dialog.edit_lines(),
-                    create_free_copies=dialog.create_free_copies(),
-                    remove_copies=dialog.remove_copies(),
-                )
                 scryfall = ScryfallService(session)
                 try:
+                    if new_prints:
+                        ImportService(session, scryfall).add_confirmed_print_copies(
+                            new_prints
+                        )
+                    service.apply_deck_edit(
+                        deck_id,
+                        dialog.edit_lines(),
+                        create_free_copies=dialog.create_free_copies(),
+                        remove_copies=dialog.remove_copies(),
+                    )
                     if commander is None:
                         service.set_commander(deck_id, None)
                     else:

@@ -4,6 +4,18 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from mtg_rebuilder.algorithms.card_utils import is_scryfall_legality_issue
+from mtg_rebuilder.algorithms.copy_traits import (
+    CopyTraits,
+    format_copy_trait_line,
+    normalize_collector_number,
+    normalize_condition,
+    normalize_copy_traits,
+    normalize_edition,
+    normalize_finish,
+    normalize_language,
+    normalize_printing_id,
+    sorted_trait_counts,
+)
 from mtg_rebuilder.algorithms.commander_rules import (
     CommanderCard,
     CommanderRuleIssue,
@@ -104,12 +116,17 @@ class CommanderLegalityIssue:
 
 @dataclass(frozen=True)
 class CopyDetail:
-    """One physical copy: which edition it is and where it currently lives."""
+    """One physical copy: print facts and where it currently lives."""
 
     copy_id: int
     oracle_id: str
     edition: str | None
     deck_name: str | None
+    finish: str | None = None
+    language: str | None = None
+    condition: str | None = None
+    collector_number: str | None = None
+    printing_id: str | None = None
 
 
 class InventoryService:
@@ -123,9 +140,28 @@ class InventoryService:
         quantity: int = 1,
         *,
         edition: str | None = None,
+        finish: str | None = None,
+        language: str | None = None,
+        condition: str | None = None,
+        collector_number: str | None = None,
+        printing_id: str | None = None,
         record_activity: bool = True,
     ) -> list[CardCopy]:
-        copies = self._copies.add_many(oracle_id, quantity, edition=edition)
+        """Create copies. Only non-empty trait values are stored.
+
+        Does not write the legacy ``foil`` flag. A missing ``*F*`` must not
+        become nonfoil.
+        """
+        copies = self._copies.add_many(
+            oracle_id,
+            quantity,
+            edition=normalize_edition(edition),
+            finish=normalize_finish(finish),
+            language=normalize_language(language),
+            condition=normalize_condition(condition),
+            collector_number=normalize_collector_number(collector_number),
+            printing_id=normalize_printing_id(printing_id),
+        )
         if record_activity and copies:
             ActivityService(self._session).record_copies_added(
                 oracle_id, len(copies)
@@ -182,6 +218,11 @@ class InventoryService:
                 oracle_id=copy.card_id,
                 edition=copy.edition,
                 deck_name=deck_name,
+                finish=copy.finish,
+                language=copy.language,
+                condition=copy.condition,
+                collector_number=copy.collector_number,
+                printing_id=copy.printing_id,
             )
             for copy, deck_name in self._copies.list_with_deck(oracle_id)
         ]
@@ -189,10 +230,32 @@ class InventoryService:
     def set_copy_editions(self, editions: dict[int, str | None]) -> int:
         """Record set codes per copy. Blank values reset to unspecified."""
         normalized = {
-            copy_id: (edition.strip().upper() or None) if edition else None
-            for copy_id, edition in editions.items()
+            copy_id: normalize_edition(edition) for copy_id, edition in editions.items()
         }
         return self._copies.set_editions(normalized)
+
+    def set_copy_traits(self, traits: dict[int, CopyTraits]) -> int:
+        """Record print facts per copy. A blank field clears that field.
+
+        This is the explicit editor. Imports use ``add_copy`` on new rows and
+        do not call this, so an empty import cannot wipe a value already stored.
+        """
+        return self._copies.set_trait_fields(
+            {
+                copy_id: {
+                    "edition": normalized.edition,
+                    "finish": normalized.finish,
+                    "language": normalized.language,
+                    "condition": normalized.condition,
+                    "collector_number": normalized.collector_number,
+                    "printing_id": normalized.printing_id,
+                }
+                for copy_id, normalized in (
+                    (copy_id, normalize_copy_traits(value))
+                    for copy_id, value in traits.items()
+                )
+            }
+        )
 
 
 class DeckService:
@@ -565,6 +628,32 @@ class DeckService:
             )
             for oracle_id in ids
         }
+
+    def copy_trait_lines(self, oracle_ids: Iterable[str]) -> dict[str, str]:
+        """Display line of recorded finish, language, condition, and number.
+
+        Separate from ``card_list_stock``: those three numbers stay counts by
+        ``oracle_id``. Cards with nothing recorded are omitted.
+        """
+        ids = list(dict.fromkeys(oracle_ids))
+        if not ids:
+            return {}
+        grouped = self._copies.trait_counts(ids)
+        lines: dict[str, str] = {}
+        for oracle_id in ids:
+            text = format_copy_trait_line(
+                sorted_trait_counts(grouped.finishes.get(oracle_id, {})),
+                sorted_trait_counts(grouped.languages.get(oracle_id, {})),
+                sorted_trait_counts(grouped.conditions.get(oracle_id, {})),
+                sorted_trait_counts(grouped.collector_numbers.get(oracle_id, {})),
+            )
+            if text:
+                lines[oracle_id] = text
+        return lines
+
+    def latest_printing_ids(self, oracle_ids: Iterable[str]) -> dict[str, str]:
+        """Printing to show for each card: the copy updated last."""
+        return self._copies.latest_printing_ids(oracle_ids)
 
     def deck_edit_rows(self, deck_id: int) -> list[DeckEditRow]:
         rows = self._decks.list_deck_cards_with_card(deck_id, exclude_token=True)

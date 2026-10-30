@@ -89,11 +89,20 @@ def remaining_after_allocation(
 
 @dataclass(frozen=True)
 class MovedCopy:
-    """A copy the target deck now holds that has no edition recorded."""
+    """A copy the target deck now holds that has no edition recorded.
+
+    Other traits are whatever was already on the copy, so the prompt can show
+    them. They do not decide whether the copy is listed.
+    """
 
     copy_id: int
     oracle_id: str
     card_name: str
+    finish: str | None = None
+    language: str | None = None
+    condition: str | None = None
+    collector_number: str | None = None
+    printing_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -444,6 +453,11 @@ class OptimizationService:
                 copy_id=copy.id,
                 oracle_id=copy.card_id,
                 card_name=card_name,
+                finish=copy.finish,
+                language=copy.language,
+                condition=copy.condition,
+                collector_number=copy.collector_number,
+                printing_id=copy.printing_id,
             )
             for copy, card_name in self._copies.list_unspecified_for_deck(target.id)
         ]

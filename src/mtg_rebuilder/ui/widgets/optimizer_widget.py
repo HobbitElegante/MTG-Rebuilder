@@ -54,6 +54,7 @@ from mtg_rebuilder.ui.combo import (
 )
 from mtg_rebuilder.ui.widgets.card_preview import card_images_enabled
 from mtg_rebuilder.ui.widgets.chip_bar import Chip, ChipBar
+from mtg_rebuilder.algorithms.copy_traits import CopyTraits
 from mtg_rebuilder.ui.widgets.edition_picker import CopyEditionTable
 from mtg_rebuilder.ui.widgets.viable_commanders_column import (
     ViableCommandersColumn,
@@ -119,9 +120,9 @@ class SpecifyEditionsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._translator = translator
-        self._editions: dict[int, str | None] = {}
+        self._traits: dict[int, CopyTraits] = {}
         self.setWindowTitle(self._translator.t("inventory.editions.prompt_title"))
-        self.resize(560, 520)
+        self.resize(980, 520)
 
         layout = QVBoxLayout(self)
         hint = QLabel(
@@ -133,7 +134,18 @@ class SpecifyEditionsDialog(QDialog):
         self._table = CopyEditionTable(self._translator)
         self._table.set_copies(
             [
-                (copy.copy_id, copy.oracle_id, copy.card_name, None)
+                (
+                    copy.copy_id,
+                    copy.oracle_id,
+                    copy.card_name,
+                    CopyTraits(
+                        finish=copy.finish,
+                        language=copy.language,
+                        condition=copy.condition,
+                        collector_number=copy.collector_number,
+                        printing_id=copy.printing_id,
+                    ),
+                )
                 for copy in copies
             ]
         )
@@ -149,15 +161,11 @@ class SpecifyEditionsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _accept(self) -> None:
-        self._editions = {
-            copy_id: edition
-            for copy_id, edition in self._table.editions().items()
-            if edition is not None
-        }
+        self._traits = self._table.traits()
         self.accept()
 
-    def editions(self) -> dict[int, str | None]:
-        return self._editions
+    def traits(self) -> dict[int, CopyTraits]:
+        return self._traits
 
 
 class OptimizerWidget(QWidget):
@@ -1999,12 +2007,12 @@ class OptimizerWidget(QWidget):
         dialog = SpecifyEditionsDialog(self._translator, deck_name, moved, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        editions = dialog.editions()
-        if not editions:
+        traits = dialog.traits()
+        if not traits:
             return
         try:
             with get_session() as session:
-                InventoryService(session).set_copy_editions(editions)
+                InventoryService(session).set_copy_traits(traits)
         except Exception as exc:
             QMessageBox.critical(
                 self,

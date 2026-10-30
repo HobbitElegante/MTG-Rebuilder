@@ -68,7 +68,8 @@ from mtg_rebuilder.ui.widgets.card_preview import (
     card_images_enabled,
 )
 from mtg_rebuilder.ui.widgets.chip_bar import Chip, ChipBar
-from mtg_rebuilder.ui.widgets.edition_picker import CopyEditionTable, EditionComboBox
+from mtg_rebuilder.algorithms.copy_traits import CopyTraits
+from mtg_rebuilder.ui.widgets.edition_picker import CopyEditionTable
 from mtg_rebuilder.ui.widgets.import_dialogs import AddInventoryListDialog, QuantityStepper
 from mtg_rebuilder.ui.widgets.inventory_card_details import InventoryCardDetails
 from mtg_rebuilder.ui.widgets.inventory_filter_panel import InventoryFilterDialog
@@ -269,10 +270,10 @@ class EditInventoryCopiesDialog(QDialog):
         self._row = row
         self._total = row.total_copies
         self._copies = copies or []
-        self._editions: dict[int, str | None] = {}
+        self._traits: dict[int, CopyTraits] = {}
         assigned = row.total_copies - row.free_copies
         self.setWindowTitle(self._translator.t("inventory.edit_dialog.title"))
-        self.resize(480, 420 if self._copies else 200)
+        self.resize(980 if self._copies else 480, 520 if self._copies else 200)
         self._build_ui(assigned)
 
     def _build_ui(self, assigned: int) -> None:
@@ -300,7 +301,7 @@ class EditInventoryCopiesDialog(QDialog):
 
         self._edition_table: CopyEditionTable | None = None
         if self._copies:
-            group = QGroupBox(self._translator.t("inventory.editions.title"))
+            group = QGroupBox(self._translator.t("inventory.edit_dialog.printing"))
             group_layout = QVBoxLayout(group)
             hint = QLabel(self._translator.t("inventory.editions.hint"))
             hint.setWordWrap(True)
@@ -313,23 +314,21 @@ class EditInventoryCopiesDialog(QDialog):
                         copy.copy_id,
                         copy.oracle_id,
                         self._copy_label(number, copy),
-                        copy.edition,
+                        CopyTraits(
+                            edition=copy.edition,
+                            finish=copy.finish,
+                            language=copy.language,
+                            condition=copy.condition,
+                            collector_number=copy.collector_number,
+                            printing_id=copy.printing_id,
+                        ),
                     )
                     for number, copy in enumerate(self._copies, start=1)
                 ]
             )
             group_layout.addWidget(self._edition_table, 1)
-
             apply_row = QHBoxLayout()
-            self._apply_all_combo = EditionComboBox(
-                self._row.oracle_id, None, self._translator
-            )
-            self._apply_all_button = QPushButton(
-                self._translator.t("inventory.editions.apply_all")
-            )
-            self._apply_all_button.clicked.connect(self._apply_edition_to_all)
-            apply_row.addWidget(self._apply_all_combo, 1)
-            apply_row.addWidget(self._apply_all_button)
+            self._edition_table.populate_apply_row(apply_row, self._row.oracle_id)
             group_layout.addLayout(apply_row)
             layout.addWidget(group, 1)
 
@@ -346,21 +345,17 @@ class EditInventoryCopiesDialog(QDialog):
             number=number, where=where
         )
 
-    def _apply_edition_to_all(self) -> None:
-        if self._edition_table is not None:
-            self._edition_table.apply_to_all(self._apply_all_combo.edition())
-
     def _accept(self) -> None:
         self._total = self._qty.value()
         if self._edition_table is not None:
-            self._editions = self._edition_table.editions()
+            self._traits = self._edition_table.traits()
         self.accept()
 
     def total_copies(self) -> int:
         return self._total
 
-    def copy_editions(self) -> dict[int, str | None]:
-        return self._editions
+    def copy_traits(self) -> dict[int, CopyTraits]:
+        return self._traits
 
 
 class InventoryWidget(QWidget):
@@ -699,9 +694,7 @@ class InventoryWidget(QWidget):
     def _reload(self) -> None:
         self._needs_reload = False
         with get_session() as session:
-            self._rows = BrowseService(session).list_inventory(
-                include_editions=self._track_editions
-            )
+            self._rows = BrowseService(session).list_inventory(include_editions=True)
             armed = [
                 (deck.id, deck.name)
                 for deck in DeckService(session).list_decks(status=DeckStatus.ARMED)
@@ -1390,7 +1383,11 @@ class InventoryWidget(QWidget):
             self._preview.clear()
             self._details.clear()
         else:
-            self._preview.set_card(row.oracle_id, row.card_name)
+            self._preview.set_card(
+                row.oracle_id,
+                row.card_name,
+                printing_id=row.preview_printing_id,
+            )
             self._details.set_row(row)
 
     def _add_card(self) -> None:
@@ -1486,12 +1483,20 @@ class InventoryWidget(QWidget):
         if not quantities:
             return
         set_codes = dialog.set_codes() if self._track_editions else {}
+        finishes = dialog.finishes() if self._track_editions else {}
+        collector_numbers = (
+            dialog.collector_numbers() if self._track_editions else {}
+        )
         try:
             with get_session() as session:
                 inventory = InventoryService(session)
                 for oracle_id, quantity in quantities.items():
                     inventory.add_copy(
-                        oracle_id, quantity, edition=set_codes.get(oracle_id)
+                        oracle_id,
+                        quantity,
+                        edition=set_codes.get(oracle_id),
+                        finish=finishes.get(oracle_id),
+                        collector_number=collector_numbers.get(oracle_id),
                     )
         except Exception as exc:
             QMessageBox.critical(
@@ -1510,19 +1515,17 @@ class InventoryWidget(QWidget):
         row = self._selected_row()
         if row is None:
             return
-        copies: list[CopyDetail] = []
-        if self._track_editions:
-            with get_session() as session:
-                copies = InventoryService(session).list_copies_with_deck(row.oracle_id)
+        with get_session() as session:
+            copies = InventoryService(session).list_copies_with_deck(row.oracle_id)
         dialog = EditInventoryCopiesDialog(self._translator, row, copies, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
             with get_session() as session:
                 inventory = InventoryService(session)
-                editions = dialog.copy_editions()
-                if editions:
-                    inventory.set_copy_editions(editions)
+                traits = dialog.copy_traits()
+                if traits:
+                    inventory.set_copy_traits(traits)
                 inventory.set_total_copies(row.oracle_id, dialog.total_copies())
         except Exception as exc:
             QMessageBox.critical(

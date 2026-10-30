@@ -2,7 +2,7 @@
 
 Build portable binaries with **PyInstaller** (`onedir`). Linux wraps the folder in an **AppImage**. Windows produces `dist/MTG-Rebuilder/MTG-Rebuilder.exe` and zips it for distribution.
 
-**Version / tag:** **`1.3.0`** — online Scryfall search in Inventory, card stock (copies / free / decks) in the Decks preview, import fix for a card repeated on two lines. Bump the version here and in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` before the next tag. Test count before tagging: `uv run pytest` (currently **413**).
+**Version / tag:** **`1.4.0`** — per-copy finish, language, condition, and a visual print grid; Inventory preview and image grid show that printing. Also in this tag: Viable plans filtered by several decks, faster startup, lookup indexes. Bump the version here and in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` before the next tag. Test count before tagging: `uv run pytest` (currently **440**).
 
 Published builds appear on the repository **Releases** page when a version tag is pushed.
 
@@ -83,29 +83,29 @@ CI builds and publishes automatically when you **push a version tag**. Binaries 
 ### Checklist (each version)
 
 1. Code ready on `main` — local tests green: `uv run pytest`.
-2. Version string in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` / README Features+Latest matches the tag you will create (e.g. `1.3.0`).
+2. Version string in `pyproject.toml` / `src/mtg_rebuilder/__init__.py` / README Features+Latest matches the tag you will create (e.g. `1.4.0`).
 3. Commit and push:
    ```bash
    git push origin main
    ```
 4. Create and push the tag:
    ```bash
-   git tag v1.3.0
-   git push origin v1.3.0
+   git tag v1.4.0
+   git push origin v1.4.0
    ```
 5. Open the repo **Actions** tab — wait for the **Release** workflow (tests + Linux AppImage + Windows zip). Often ~10–20 minutes.
-6. Open **Releases** — `v1.3.0` should list the AppImage and the Windows zip.
+6. Open **Releases** — `v1.4.0` should list the AppImage and the Windows zip.
 7. Optional: edit the release notes.
 
 ### If the workflow fails
 
 1. Open the red job log in **Actions** and fix the issue on `main`.
-2. Either bump to a new tag (`v1.3.1`) after pushing the fix, or delete the bad tag and recreate it on the fixed commit (keeps the same version string):
+2. Either bump to a new tag (`v1.4.1`) after pushing the fix, or delete the bad tag and recreate it on the fixed commit (keeps the same version string):
    ```bash
-   git tag -d v1.3.0
-   git push origin :refs/tags/v1.3.0
-   git tag v1.3.0
-   git push origin v1.3.0
+   git tag -d v1.4.0
+   git push origin :refs/tags/v1.4.0
+   git tag v1.4.0
+   git push origin v1.4.0
    ```
 
 Known headless pitfalls already handled in `.github/workflows/release.yml`:

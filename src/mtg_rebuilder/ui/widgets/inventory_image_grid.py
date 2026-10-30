@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from mtg_rebuilder.i18n import Translator
 from mtg_rebuilder.services.browse_service import InventorySummaryRow
+from mtg_rebuilder.services.card_image_service import printing_image_path
 from mtg_rebuilder.ui.inventory_image_layout import (
     CAPTION_EXTRA,
     GRID_COLUMNS,
@@ -44,50 +45,65 @@ _PIXMAP_CACHE_SIZE = 160
 
 _tile_owner_ids = count(1)
 
-# oracle_id -> QPixmap (hit) or None (ensure failed / unreadable). Disk misses
+# Cache key -> QPixmap (hit) or None (ensure failed / unreadable). Disk misses
 # that have not been ensured yet are *not* stored, so scroll can still download.
+# A specified printing does not share the generic card image.
 _pixmap_cache: OrderedDict[str, QPixmap | None] = OrderedDict()
 
 
-def _cached_pixmap(oracle_id: str) -> tuple[bool, QPixmap | None]:
+def image_cache_key(oracle_id: str, printing_id: str | None) -> str:
+    return f"{oracle_id}\0{printing_id or ''}"
+
+
+def _cached_pixmap(cache_key: str) -> tuple[bool, QPixmap | None]:
     """Return (known, pixmap). known=False means not yet looked up."""
-    if oracle_id not in _pixmap_cache:
+    if cache_key not in _pixmap_cache:
         return False, None
-    _pixmap_cache.move_to_end(oracle_id)
-    return True, _pixmap_cache[oracle_id]
+    _pixmap_cache.move_to_end(cache_key)
+    return True, _pixmap_cache[cache_key]
 
 
-def _store_pixmap(oracle_id: str, pixmap: QPixmap | None) -> None:
-    _pixmap_cache[oracle_id] = pixmap
-    _pixmap_cache.move_to_end(oracle_id)
+def _store_pixmap(cache_key: str, pixmap: QPixmap | None) -> None:
+    _pixmap_cache[cache_key] = pixmap
+    _pixmap_cache.move_to_end(cache_key)
     while len(_pixmap_cache) > _PIXMAP_CACHE_SIZE:
         _pixmap_cache.popitem(last=False)
 
 
-def load_local_pixmap(oracle_id: str, images_dir: Path | None = None) -> QPixmap | None:
+def load_local_pixmap(
+    oracle_id: str,
+    images_dir: Path | None = None,
+    printing_id: str | None = None,
+) -> QPixmap | None:
     """Return a cached/on-disk pixmap, or None if not available yet.
 
     Successful loads and permanent failures (after ensure) are cached. A plain
     disk miss is *not* cached so the caller can still request an on-demand
-    download when the tile becomes visible.
+    download when the tile becomes visible. A printing looks only at that
+    art's file, so the grid does not keep the generic card image.
     """
-    known, cached = _cached_pixmap(oracle_id)
+    cache_key = image_cache_key(oracle_id, printing_id)
+    known, cached = _cached_pixmap(cache_key)
     if known:
         return cached
-    path = local_front_image_path(oracle_id, images_dir)
+    if printing_id:
+        candidate = printing_image_path(printing_id, images_dir)
+        path = candidate if candidate.is_file() and candidate.stat().st_size > 0 else None
+    else:
+        path = local_front_image_path(oracle_id, images_dir)
     if path is None:
         return None
     pixmap = QPixmap(str(path))
     if pixmap.isNull():
-        _store_pixmap(oracle_id, None)
+        _store_pixmap(cache_key, None)
         return None
-    _store_pixmap(oracle_id, pixmap)
+    _store_pixmap(cache_key, pixmap)
     return pixmap
 
 
-def mark_image_unavailable(oracle_id: str) -> None:
-    """Remember that ensure_image failed so we do not retry in a tight loop."""
-    _store_pixmap(oracle_id, None)
+def mark_image_unavailable(cache_key: str) -> None:
+    """Remember that ensure failed so we do not retry in a tight loop."""
+    _store_pixmap(cache_key, None)
 
 
 class _CardTile(QFrame):
@@ -104,6 +120,7 @@ class _CardTile(QFrame):
         self._translator = translator
         self._owner = next(_tile_owner_ids)
         self._oracle_id = ""
+        self._printing_id = ""
         self._card_name = ""
         self._selected = False
         self._placeholder_loading = True
@@ -142,6 +159,9 @@ class _CardTile(QFrame):
     def oracle_id(self) -> str:
         return self._oracle_id
 
+    def printing_id(self) -> str:
+        return self._printing_id
+
     def card_name(self) -> str:
         return self._caption.text()
 
@@ -159,7 +179,10 @@ class _CardTile(QFrame):
         Same-card rebinds are cheap (selection/caption only) so scroll sync can
         call this without decoding or rescaling art on every pixel.
         """
-        same_card = row.oracle_id == self._oracle_id
+        printing_id = row.preview_printing_id or ""
+        same_card = (
+            row.oracle_id == self._oracle_id and printing_id == self._printing_id
+        )
         if same_card:
             if self._caption.text() != row.card_name:
                 self._card_name = row.card_name
@@ -169,6 +192,7 @@ class _CardTile(QFrame):
 
         self.cancel_pending()
         self._oracle_id = row.oracle_id
+        self._printing_id = printing_id
         self._card_name = row.card_name
         self._caption.setText(row.card_name)
         self.set_selected(selected)
@@ -207,7 +231,8 @@ class _CardTile(QFrame):
             self._rescale()
             return
 
-        known, cached = _cached_pixmap(self._oracle_id)
+        cache_key = image_cache_key(self._oracle_id, self._printing_id or None)
+        known, cached = _cached_pixmap(cache_key)
         if known:
             if cached is not None:
                 self._source_pixmap = cached
@@ -216,25 +241,31 @@ class _CardTile(QFrame):
                 self._show_placeholder(loading=False)
             return
 
-        pixmap = load_local_pixmap(self._oracle_id)
+        pixmap = load_local_pixmap(
+            self._oracle_id, printing_id=self._printing_id or None
+        )
         if pixmap is not None:
             self._source_pixmap = pixmap
             self._rescale()
             return
 
-        # Not on disk yet — marked slot, then ensure_image in the background.
+        # Not on disk yet — placeholder, then the printing (or the card) in the background.
         self._show_placeholder(loading=True)
-        image_loader().request(self._owner, self._oracle_id, False)
+        image_loader().request(
+            self._owner,
+            self._oracle_id,
+            False,
+            self._printing_id or None,
+        )
 
-    def apply_resolved(self, oracle_id: str, pixmap: QPixmap | None) -> None:
-        if oracle_id != self._oracle_id:
-            return
+    def apply_resolved(self, pixmap: QPixmap | None) -> None:
+        cache_key = image_cache_key(self._oracle_id, self._printing_id or None)
         if pixmap is None or pixmap.isNull():
-            mark_image_unavailable(oracle_id)
+            mark_image_unavailable(cache_key)
             self._source_pixmap = None
             self._show_placeholder(loading=False)
             return
-        _store_pixmap(oracle_id, pixmap)
+        _store_pixmap(cache_key, pixmap)
         self._source_pixmap = pixmap
         self._rescale()
 
@@ -622,8 +653,13 @@ class InventoryImageGrid(QScrollArea):
                 structure_changed = True
                 continue
 
-            # Index already mounted: keep art; only rebind if the card changed.
-            if tile.oracle_id() != row.oracle_id:
+            # Index already mounted: keep art; rebind when the card or its
+            # printing changed so an edit shows up without scrolling away.
+            printing_id = row.preview_printing_id or ""
+            if (
+                tile.oracle_id() != row.oracle_id
+                or tile.printing_id() != printing_id
+            ):
                 tile.bind(row, selected=selected)
                 structure_changed = True
             else:
@@ -639,20 +675,30 @@ class InventoryImageGrid(QScrollArea):
         back: bool,
         image: object,
         _has_back: bool,
+        printing_id: str = "",
     ) -> None:
-        if back:
+        if back and not printing_id:
             return
         pixmap: QPixmap | None = None
         if isinstance(image, QImage) and not image.isNull():
             pixmap = QPixmap.fromImage(image)
         elif isinstance(image, QPixmap) and not image.isNull():
             pixmap = image
+        matched = False
         for tile in self._tiles.values():
-            if tile.oracle_id() == oracle_id:
-                tile.apply_resolved(oracle_id, pixmap)
+            if tile.oracle_id() != oracle_id:
+                continue
+            if printing_id:
+                if tile.printing_id() != printing_id:
+                    continue
+            elif tile.printing_id():
+                # The usual card image arrived, but this tile is waiting on a printing.
+                continue
+            tile.apply_resolved(pixmap)
+            matched = True
         # Cache failure even if no tile still shows this card.
-        if pixmap is None or pixmap.isNull():
-            mark_image_unavailable(oracle_id)
+        if not matched and (pixmap is None or pixmap.isNull()):
+            mark_image_unavailable(image_cache_key(oracle_id, printing_id or None))
 
     def _on_tile_clicked(self, oracle_id: str) -> None:
         self.setFocus(Qt.FocusReason.MouseFocusReason)

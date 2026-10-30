@@ -1,4 +1,5 @@
 from mtg_rebuilder.algorithms.card_utils import is_commander_legality_issue
+from mtg_rebuilder.algorithms.copy_traits import format_trait_summary, uppercase_codes
 from mtg_rebuilder.algorithms.commander_rules import CommanderRuleIssue, CommanderRuleKind
 from mtg_rebuilder.algorithms.inventory_filters import (
     RARITY_BY_CODE,
@@ -142,10 +143,20 @@ def format_inventory_detail_lines(
             format_rarity_summary(row, translator),
         ),
     ]
-    if track_editions:
+    recorded_edition = any(code for code, _count in row.editions)
+    if track_editions or recorded_edition:
         lines.append(
             (translator.t("inventory.table.edition"), format_edition_summary(row))
         )
+    for label_key, counts in (
+        ("inventory.editions.finish", row.finishes),
+        ("inventory.editions.language", uppercase_codes(row.languages)),
+        ("inventory.editions.condition", row.conditions),
+        ("inventory.editions.collector", row.collector_numbers),
+    ):
+        summary = format_trait_summary(counts)
+        if summary:
+            lines.append((translator.t(label_key), summary))
     lines.extend(
         [
             (translator.t("inventory.table.total"), str(row.total_copies)),

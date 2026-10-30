@@ -2,8 +2,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from mtg_rebuilder.models import Base, Card, CardPrint
-from mtg_rebuilder.services.scryfall_service import ScryfallService, prints_from_scryfall
+from mtg_rebuilder.models import Base, Card, CardPrint, CardPrinting
+from mtg_rebuilder.services.scryfall_service import (
+    ScryfallService,
+    printings_from_scryfall,
+    prints_from_scryfall,
+)
 
 
 @pytest.fixture
@@ -111,6 +115,72 @@ def test_list_prints_falls_back_to_cache_when_offline(session: Session) -> None:
     prints = ScryfallService(session, client=client).list_prints("sol", refresh=True)
 
     assert prints == [("C21", "Commander 2021")]
+
+
+def test_two_arts_in_one_set_stay_one_card_print(session: Session) -> None:
+    payloads = [
+        {
+            "id": "art-a",
+            "set": "c21",
+            "set_name": "Commander 2021",
+            "collector_number": "263",
+            "illustration_id": "ill-a",
+            "released_at": "2021-04-23",
+            "rarity": "uncommon",
+        },
+        {
+            "id": "art-b",
+            "set": "c21",
+            "set_name": "Commander 2021",
+            "collector_number": "264",
+            "illustration_id": "ill-b",
+            "frame_effects": ["borderless"],
+            "released_at": "2021-04-23",
+            "rarity": "uncommon",
+        },
+    ]
+    collapsed = prints_from_scryfall(payloads)
+    assert [row[0] for row in collapsed] == ["C21"]
+
+    client = _FakePrintsClient(payloads)
+    service = ScryfallService(session, client=client)
+    assert service.list_prints("sol") == [("C21", "Commander 2021")]
+    arts = service.list_printings("sol")
+
+    assert session.query(CardPrint).count() == 1
+    assert session.query(CardPrinting).count() == 2
+    assert arts == [
+        ("art-a", "C21", "263", "263", None),
+        ("art-b", "C21", "264", "264 · borderless", None),
+    ]
+    assert printings_from_scryfall(payloads)[1][3] == "ill-b"
+
+
+def test_printings_keep_the_small_image() -> None:
+    rows = printings_from_scryfall(
+        [
+            {
+                "id": "art-a",
+                "set": "c21",
+                "collector_number": "263",
+                "image_uris": {
+                    "small": "https://example.test/small.jpg",
+                    "normal": "https://example.test/normal.jpg",
+                },
+            },
+            {
+                "id": "art-face",
+                "set": "c21",
+                "collector_number": "264",
+                "card_faces": [
+                    {"image_uris": {"small": "https://example.test/face.jpg"}},
+                ],
+            },
+        ]
+    )
+
+    assert rows[0][5] == "https://example.test/small.jpg"
+    assert rows[1][5] == "https://example.test/face.jpg"
 
 
 def test_list_prints_offline_without_cache_returns_empty(session: Session) -> None:

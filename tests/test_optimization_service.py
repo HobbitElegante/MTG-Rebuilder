@@ -610,6 +610,43 @@ def test_list_viable_plans_fixed_n_and_max(session: Session) -> None:
     assert maximum.plans[0].label() == "Alpha · Bravo · Charlie"
 
 
+def test_list_viable_plans_ignore_finish(session: Session) -> None:
+    """Two copies with different finishes are still stock 2 for the same card."""
+    sol = Card(oracle_id="sol", name="Sol Ring", is_basic_land=False, is_token=False)
+    alpha = Deck(name="Alpha", status=DeckStatus.DISMANTLED)
+    bravo = Deck(name="Bravo", status=DeckStatus.DISMANTLED)
+    session.add_all([sol, alpha, bravo])
+    session.flush()
+    copies = [
+        CardCopy(card_id="sol"),
+        CardCopy(card_id="sol"),
+    ]
+    session.add_all(
+        [
+            DeckCard(
+                deck_id=alpha.id, card_id="sol", quantity=1, role=DeckCardRole.MAIN
+            ),
+            DeckCard(
+                deck_id=bravo.id, card_id="sol", quantity=1, role=DeckCardRole.MAIN
+            ),
+            *copies,
+        ]
+    )
+    session.flush()
+
+    service = OptimizationService(session)
+    blank = service.list_viable_plans(n=2)
+    copies[0].finish = "foil"
+    copies[1].finish = "etched"
+    session.flush()
+    marked = service.list_viable_plans(n=2)
+
+    assert [plan.label() for plan in marked.plans] == [
+        plan.label() for plan in blank.plans
+    ]
+    assert marked.plans[0].label() == "Alpha · Bravo"
+
+
 def test_list_viable_plans_respect_locked(session: Session) -> None:
     from mtg_rebuilder.models import CardAssignment
 

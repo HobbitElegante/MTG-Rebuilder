@@ -1,9 +1,32 @@
 from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from mtg_rebuilder.algorithms.copy_traits import preferred_printing_id
 from mtg_rebuilder.models import Card, CardAssignment, CardCopy, Deck
+
+# Fields the app records on a copy. ``foil`` is not one of them.
+_TRAIT_FIELDS = (
+    "edition",
+    "finish",
+    "language",
+    "condition",
+    "collector_number",
+    "printing_id",
+)
+
+
+@dataclass(frozen=True)
+class CopyTraitCounts:
+    """Grouped values per card. ``None`` keys are copies with that field empty."""
+
+    finishes: dict[str, dict[str | None, int]]
+    languages: dict[str, dict[str | None, int]]
+    conditions: dict[str, dict[str | None, int]]
+    collector_numbers: dict[str, dict[str | None, int]]
 
 
 class CopyRepository:
@@ -22,10 +45,30 @@ class CopyRepository:
         return copy
 
     def add_many(
-        self, card_id: str, quantity: int, *, edition: str | None = None
+        self,
+        card_id: str,
+        quantity: int,
+        *,
+        edition: str | None = None,
+        finish: str | None = None,
+        language: str | None = None,
+        condition: str | None = None,
+        collector_number: str | None = None,
+        printing_id: str | None = None,
     ) -> list[CardCopy]:
+        stamped = datetime.now(timezone.utc) if printing_id else None
         copies = [
-            CardCopy(card_id=card_id, edition=edition) for _ in range(quantity)
+            CardCopy(
+                card_id=card_id,
+                edition=edition,
+                finish=finish,
+                language=language,
+                condition=condition,
+                collector_number=collector_number,
+                printing_id=printing_id,
+                updated_at=stamped,
+            )
+            for _ in range(quantity)
         ]
         for copy in copies:
             self._session.add(copy)
@@ -236,20 +279,96 @@ class CopyRepository:
 
     def set_editions(self, editions: dict[int, str | None]) -> int:
         """Assign editions by copy id; returns how many rows changed."""
-        if not editions:
+        return self.set_trait_fields(
+            {copy_id: {"edition": edition} for copy_id, edition in editions.items()}
+        )
+
+    def set_trait_fields(self, updates: dict[int, dict[str, str | None]]) -> int:
+        """Write the given fields on each copy. Omitted fields stay as they are.
+
+        Does not touch ``foil``. Returns how many rows changed.
+        """
+        if not updates:
             return 0
         copies = self._session.scalars(
-            select(CardCopy).where(CardCopy.id.in_(list(editions)))
+            select(CardCopy).where(CardCopy.id.in_(list(updates)))
         ).all()
         changed = 0
         for copy in copies:
-            edition = editions[copy.id]
-            if copy.edition == edition:
+            fields = updates.get(copy.id)
+            if not fields:
                 continue
-            copy.edition = edition
-            changed += 1
+            row_changed = False
+            for name, value in fields.items():
+                if name not in _TRAIT_FIELDS:
+                    raise ValueError(f"Unknown copy field: {name}")
+                if getattr(copy, name) == value:
+                    continue
+                setattr(copy, name, value)
+                row_changed = True
+            if row_changed:
+                copy.updated_at = datetime.now(timezone.utc)
+                changed += 1
         self._session.flush()
         return changed
+
+    def latest_printing_ids(
+        self, oracle_ids: Iterable[str] | None = None
+    ) -> dict[str, str]:
+        """Scryfall id of the most recently updated printed copy, per card."""
+        query = select(
+            CardCopy.card_id,
+            CardCopy.printing_id,
+            CardCopy.updated_at,
+            CardCopy.id,
+        ).where(CardCopy.printing_id.is_not(None))
+        if oracle_ids is not None:
+            ids = list(oracle_ids)
+            if not ids:
+                return {}
+            query = query.where(CardCopy.card_id.in_(ids))
+        grouped: dict[str, list[tuple[str | None, datetime | None, int]]] = {}
+        for card_id, printing_id, updated_at, copy_id in self._session.execute(query):
+            grouped.setdefault(card_id, []).append((printing_id, updated_at, copy_id))
+        chosen: dict[str, str] = {}
+        for card_id, copies in grouped.items():
+            printing_id = preferred_printing_id(copies)
+            if printing_id:
+                chosen[card_id] = printing_id
+        return chosen
+
+    def trait_counts(
+        self, oracle_ids: Iterable[str] | None = None
+    ) -> CopyTraitCounts:
+        """Finish, language, condition, and collector number grouped by card.
+
+        ``oracle_ids`` None scans every copy (inventory). A list limits the
+        query to those cards (deck preview). Display only: stock counts do
+        not use this.
+        """
+        ids = list(oracle_ids) if oracle_ids is not None else None
+        return CopyTraitCounts(
+            finishes=self._value_counts(CardCopy.finish, ids),
+            languages=self._value_counts(CardCopy.language, ids),
+            conditions=self._value_counts(CardCopy.condition, ids),
+            collector_numbers=self._value_counts(CardCopy.collector_number, ids),
+        )
+
+    def _value_counts(
+        self, column, oracle_ids: list[str] | None
+    ) -> dict[str, dict[str | None, int]]:
+        if oracle_ids is not None and not oracle_ids:
+            return {}
+        query = select(CardCopy.card_id, column, func.count(CardCopy.id)).group_by(
+            CardCopy.card_id, column
+        )
+        if oracle_ids is not None:
+            query = query.where(CardCopy.card_id.in_(oracle_ids))
+        rows = self._session.execute(query).all()
+        counts: dict[str, dict[str | None, int]] = {}
+        for card_id, value, count in rows:
+            counts.setdefault(card_id, {})[value] = int(count)
+        return counts
 
     def distinct_card_ids(self) -> set[str]:
         return set(self._session.scalars(select(CardCopy.card_id).distinct()).all())

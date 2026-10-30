@@ -31,14 +31,20 @@ GRID_WIDTH = 900
 class _StubLoader(QObject):
     """Stands in for the shared image loader: no threads, no DB, no network."""
 
-    resolved = Signal(str, bool, object, bool)
+    resolved = Signal(str, bool, object, bool, str)
 
     def __init__(self) -> None:
         super().__init__()
-        self.requests: list[tuple[int, str, bool]] = []
+        self.requests: list[tuple[int, str, bool, str | None]] = []
 
-    def request(self, owner: int, oracle_id: str, back: bool) -> None:
-        self.requests.append((owner, oracle_id, back))
+    def request(
+        self,
+        owner: int,
+        oracle_id: str,
+        back: bool,
+        printing_id: str | None = None,
+    ) -> None:
+        self.requests.append((owner, oracle_id, back, printing_id))
 
     def cancel(self, owner: int) -> None:
         self.requests = [item for item in self.requests if item[0] != owner]
@@ -91,6 +97,33 @@ def _press(grid, key: Qt.Key) -> None:
     grid.keyPressEvent(
         QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
     )
+
+
+def test_grid_requests_the_printing_shown_in_the_preview(qapp, stub_loader) -> None:
+    row = InventorySummaryRow(
+        oracle_id="rockfall",
+        card_name="Rockfall Vale",
+        total_copies=1,
+        free_copies=1,
+        assigned_decks=(),
+        preview_printing_id="print-mid",
+    )
+    grid = grid_module.InventoryImageGrid(Translator("en"))
+    grid.resize(GRID_WIDTH, 700)
+    grid.show()
+    _settle(qapp)
+    grid.set_rows([row])
+    _settle(qapp)
+    grid.ensure_layout_sync()
+    _settle(qapp)
+    try:
+        assert grid.mounted_indices()
+        assert any(
+            item[1] == "rockfall" and item[3] == "print-mid"
+            for item in stub_loader.requests
+        )
+    finally:
+        grid.deleteLater()
 
 
 def test_mounted_tiles_are_visible_and_named(qapp, stub_loader) -> None:

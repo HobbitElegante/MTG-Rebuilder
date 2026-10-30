@@ -4,11 +4,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from mtg_rebuilder.models import Base, Card, CardCopy
+from mtg_rebuilder.models import Base, Card, CardCopy, CardPrinting
 from mtg_rebuilder.services.card_image_service import (
     CardImageService,
     ImageDownloadScope,
     image_path_for,
+    preview_image_url,
 )
 
 
@@ -278,6 +279,41 @@ def test_ensure_image_returns_none_for_unknown_card(
 
     assert service.ensure_image("missing") is None
     assert service.has_back_image("missing") is False
+
+
+def test_printing_preview_downloads_the_normal_image(
+    session: Session, tmp_path: Path
+) -> None:
+    session.add(
+        Card(
+            oracle_id="oracle-1",
+            name="Sol Ring",
+            is_basic_land=False,
+            is_token=False,
+        )
+    )
+    session.flush()
+    session.add(
+        CardPrinting(
+            id="art-a",
+            oracle_id="oracle-1",
+            set_code="C21",
+            collector_number="263",
+            image_uri="https://cards.scryfall.io/small/front/a/b/art-a.jpg",
+        )
+    )
+    session.flush()
+    client = FakeImageClient()
+    service = CardImageService(session, client, images_dir=tmp_path)
+
+    path = service.ensure_printing_image("art-a")
+
+    assert path is not None and path.is_file()
+    assert client.downloaded[0][0] == preview_image_url(
+        "https://cards.scryfall.io/small/front/a/b/art-a.jpg"
+    )
+    assert "/normal/" in client.downloaded[0][0]
+    assert service.ensure_printing_image("missing") is None
 
 
 def test_ensure_image_degrades_when_download_fails(

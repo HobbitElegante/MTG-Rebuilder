@@ -210,7 +210,7 @@ def test_format_inventory_detail_lines_without_edition() -> None:
         editions=(("C21", 2), (None, 1)),
     )
     lines = dict(format_inventory_detail_lines(row, translator, track_editions=False))
-    assert "Edition" not in lines
+    assert lines["Edition"] == "C21 x2, - x1"
     assert lines["Name"] == "Sol Ring"
     assert lines["CMC"] == "1"
     assert lines["Mana"] == "1"

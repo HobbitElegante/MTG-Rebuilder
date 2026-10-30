@@ -12,7 +12,11 @@ from mtg_rebuilder.algorithms.card_utils import (
 from mtg_rebuilder.api.scryfall_client import ScryfallClient
 from mtg_rebuilder.config import SCRYFALL_COLLECTION_BATCH_SIZE
 from mtg_rebuilder.models import Card
-from mtg_rebuilder.repositories import CardPrintRepository, CardRepository
+from mtg_rebuilder.repositories import (
+    CardPrintingRepository,
+    CardPrintRepository,
+    CardRepository,
+)
 
 
 def normalize_card_name(name: str) -> str:
@@ -172,6 +176,87 @@ def prints_from_scryfall(
     return sorted(by_code.values(), key=lambda row: (row[2] or "", row[0]))
 
 
+def _printing_image_uri(entry: dict) -> str | None:
+    """Small Scryfall image for the print grid. Faces cover double-faced cards."""
+    sources = [entry]
+    faces = entry.get("card_faces")
+    if isinstance(faces, list):
+        sources.extend(face for face in faces if isinstance(face, dict))
+    for source in sources:
+        images = source.get("image_uris")
+        if not isinstance(images, dict):
+            continue
+        for key in ("small", "normal"):
+            uri = images.get(key)
+            if isinstance(uri, str) and uri.strip():
+                return uri.strip()
+    return None
+
+
+def printings_from_scryfall(
+    payloads: list[dict],
+) -> list[tuple[str, str, str | None, str | None, str | None, str]]:
+    """One row per Scryfall card id. Does not collapse arts in the same set.
+
+    Each row is ``(scryfall_id, set_code, collector_number, illustration_id, label, image_uri)``.
+    ``image_uri`` is ``""`` when Scryfall has no picture, so a later open does
+    not refetch the whole list just to look again.
+    """
+    by_id: dict[str, tuple[str, str, str | None, str | None, str | None]] = {}
+    for entry in payloads:
+        scryfall_id = entry.get("id")
+        set_code = entry.get("set")
+        if not isinstance(scryfall_id, str) or not scryfall_id.strip():
+            continue
+        if not isinstance(set_code, str) or not set_code.strip():
+            continue
+        number = entry.get("collector_number")
+        collector = number.strip() if isinstance(number, str) and number.strip() else None
+        illustration = entry.get("illustration_id")
+        illustration_id = (
+            illustration.strip()
+            if isinstance(illustration, str) and illustration.strip()
+            else None
+        )
+        by_id[scryfall_id.strip()] = (
+            scryfall_id.strip(),
+            set_code.strip().upper(),
+            collector,
+            illustration_id,
+            _printing_label(entry, collector),
+            _printing_image_uri(entry) or "",
+        )
+    return sorted(by_id.values(), key=lambda row: (row[1], row[2] or "", row[0]))
+
+
+def _printing_tuple(row) -> tuple[str, str, str | None, str | None, str | None]:
+    return (
+        row.id,
+        row.set_code,
+        row.collector_number,
+        row.label,
+        row.image_uri or None,
+    )
+
+
+def _printing_label(entry: dict, collector: str | None) -> str | None:
+    """Short combo text: collector number, plus a frame hint when there is one."""
+    effects = entry.get("frame_effects")
+    hint = ""
+    if isinstance(effects, list):
+        for effect in effects:
+            if isinstance(effect, str) and effect.strip():
+                hint = effect.strip()
+                break
+    if collector and hint:
+        return f"{collector} · {hint}"[:255]
+    if collector:
+        return collector[:255]
+    if hint:
+        return hint[:255]
+    return None
+
+
 class ScryfallOfflineError(RuntimeError):
     pass
 
@@ -181,6 +266,7 @@ class ScryfallService:
         self._session = session
         self._cards = CardRepository(session)
         self._prints = CardPrintRepository(session)
+        self._printings = CardPrintingRepository(session)
         self._client = client or ScryfallClient()
         self._owns_client = client is None
 
@@ -296,6 +382,32 @@ class ScryfallService:
             return []
         self._prints.replace_for_card(oracle_id, rows)
         return [(set_code, set_name) for set_code, set_name, _released, _rarity in rows]
+
+    def list_printings(
+        self, oracle_id: str, *, refresh: bool = False
+    ) -> list[tuple[str, str, str | None, str | None, str | None]]:
+        """Printings of one card.
+
+        Each row is ``(scryfall_id, set_code, collector_number, label, image_uri)``.
+        Cached per card after the first lookup. A cache from before images
+        existed is fetched again. Offline, returns whatever is already cached.
+        Does not change ``CardPrint`` (one row per set).
+        """
+        cached = self._printings.list_for_card(oracle_id)
+        images_ready = bool(cached) and all(row.image_uri is not None for row in cached)
+        if not refresh and images_ready:
+            return [_printing_tuple(row) for row in cached]
+
+        try:
+            payloads = self._client.fetch_card_prints(oracle_id)
+        except Exception:
+            return [_printing_tuple(row) for row in self._printings.list_for_card(oracle_id)]
+
+        rows = printings_from_scryfall(payloads)
+        if not rows:
+            return []
+        stored = self._printings.replace_for_card(oracle_id, rows)
+        return [_printing_tuple(row) for row in stored]
 
     def cached_card_count(self) -> int:
         return self._cards.count_all()

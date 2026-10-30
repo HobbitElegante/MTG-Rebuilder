@@ -112,31 +112,31 @@ def deck_export_from_payload(payload: dict[str, Any]) -> MoxfieldDeckExport:
     secondary_name: str | None = None
 
     commanders = _named_board_entries(payload, "commanders")
-    for index, (card_name, quantity) in enumerate(commanders):
+    for index, card in enumerate(commanders):
         if index == 0:
-            commander_name = card_name
-            lines.append(f"Commander: {quantity} {card_name}")
+            commander_name = card.name
+            lines.append(_format_line("Commander", card))
         else:
             secondary_role = "partner"
-            secondary_name = card_name
-            lines.append(f"Partner: {quantity} {card_name}")
+            secondary_name = card.name
+            lines.append(_format_line("Partner", card))
 
     companions = _named_board_entries(payload, "companions")
-    for card_name, quantity in companions:
+    for card in companions:
         if secondary_role is None:
             secondary_role = "companion"
-            secondary_name = card_name
-        lines.append(f"Companion: {quantity} {card_name}")
+            secondary_name = card.name
+        lines.append(_format_line("Companion", card))
 
     backgrounds = _named_board_entries(payload, "backgrounds")
-    for card_name, quantity in backgrounds:
+    for card in backgrounds:
         if secondary_role is None:
             secondary_role = "background"
-            secondary_name = card_name
-        lines.append(f"Background: {quantity} {card_name}")
+            secondary_name = card.name
+        lines.append(_format_line("Background", card))
 
-    for card_name, quantity in _named_board_entries(payload, "mainboard"):
-        lines.append(f"{quantity} {card_name}")
+    for card in _named_board_entries(payload, "mainboard"):
+        lines.append(_format_line(None, card))
 
     return MoxfieldDeckExport(
         public_id=public_id,
@@ -157,7 +157,16 @@ def fetch_moxfield_deck(public_id: str) -> MoxfieldDeckExport:
     return deck_export_from_payload(payload)
 
 
-def _named_board_entries(payload: dict[str, Any], board_name: str) -> list[tuple[str, int]]:
+@dataclass(frozen=True)
+class _MoxfieldCard:
+    name: str
+    quantity: int
+    set_code: str | None = None
+    collector_number: str | None = None
+    foil: bool = False
+
+
+def _named_board_entries(payload: dict[str, Any], board_name: str) -> list[_MoxfieldCard]:
     """Read a named board from v3 ``boards`` or legacy top-level v2 fields."""
     boards = payload.get("boards")
     if isinstance(boards, dict):
@@ -167,10 +176,10 @@ def _named_board_entries(payload: dict[str, Any], board_name: str) -> list[tuple
     return _board_entries(payload.get(board_name))
 
 
-def _board_entries(board: Any) -> list[tuple[str, int]]:
+def _board_entries(board: Any) -> list[_MoxfieldCard]:
     if not isinstance(board, dict):
         return []
-    entries: list[tuple[str, int]] = []
+    entries: list[_MoxfieldCard] = []
     for key, value in board.items():
         if key in {"count", "cards"}:
             continue
@@ -184,12 +193,62 @@ def _board_entries(board: Any) -> list[tuple[str, int]]:
             card_name = str(card["name"])
         else:
             card_name = str(key)
+            card = card if isinstance(card, dict) else {}
         try:
             quantity = int(value.get("quantity") or 1)
         except (TypeError, ValueError):
             quantity = 1
         if quantity <= 0:
             continue
-        entries.append((card_name, quantity))
-    entries.sort(key=lambda item: item[0].casefold())
+        set_code, collector, foil = _print_facts(card if isinstance(card, dict) else {})
+        # Also accept finish on the board entry itself.
+        if not foil and _is_foil(value):
+            foil = True
+        entries.append(
+            _MoxfieldCard(
+                name=card_name,
+                quantity=quantity,
+                set_code=set_code,
+                collector_number=collector,
+                foil=foil,
+            )
+        )
+    entries.sort(key=lambda item: item.name.casefold())
     return entries
+
+
+def _print_facts(card: dict[str, Any]) -> tuple[str | None, str | None, bool]:
+    """Set, collector number, and foil when the payload already has them."""
+    raw_set = card.get("set") or card.get("set_code")
+    set_code = raw_set.strip().upper() if isinstance(raw_set, str) and raw_set.strip() else None
+    raw_number = card.get("cn") or card.get("collector_number") or card.get("collectorNumber")
+    collector = (
+        raw_number.strip()
+        if isinstance(raw_number, str) and raw_number.strip()
+        else None
+    )
+    return set_code, collector, _is_foil(card)
+
+
+def _is_foil(payload: dict[str, Any]) -> bool:
+    if payload.get("foil") is True or payload.get("isFoil") is True:
+        return True
+    finish = payload.get("finish")
+    return isinstance(finish, str) and finish.strip().casefold() == "foil"
+
+
+def _format_line(role: str | None, card: _MoxfieldCard) -> str:
+    """MTGO line. Set is added only when the number or foil needs it.
+
+    A set by itself stays off the line, matching exports that never had one.
+    """
+    body = f"{card.quantity} {card.name}"
+    if card.set_code and (card.collector_number or card.foil):
+        body = f"{body} ({card.set_code})"
+        if card.collector_number:
+            body = f"{body} {card.collector_number}"
+    if card.foil:
+        body = f"{body} *F*"
+    if role:
+        return f"{role}: {body}"
+    return body

@@ -135,3 +135,20 @@ def test_format_card_stock_text_counts_and_basics() -> None:
         "Copias libres: ilimitadas\n"
         "Mazos que la usan: 8"
     )
+
+
+def test_format_card_stock_text_appends_traits_except_for_basics() -> None:
+    stock = CardListStock(total_copies=2, free_copies=2, decks_using=1)
+    text = format_card_stock_text(
+        stock, Translator("en"), is_basic_land=False, traits="foil · 263"
+    )
+    assert text == (
+        "Copies in inventory: 2\nFree copies: 2\nDecks using it: 1\nfoil · 263"
+    )
+    basic = format_card_stock_text(
+        stock, Translator("en"), is_basic_land=True, traits="foil · 263"
+    )
+    assert "foil" not in basic
+    assert format_card_stock_text(
+        stock, Translator("en"), is_basic_land=False, traits=None
+    ).count("\n") == 2

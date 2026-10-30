@@ -31,12 +31,20 @@ ARENA_SECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# qty [x] name [(SET) collector] [*F*] [Category] …
+# qty [x] name [(SET) [collector] [*F*]] [*F*] [Category] …
+# Collector number stays inside the set group so a bare name cannot lose its
+# last word. A trailing star (``101★`` or ``263*``) is part of the number;
+# ``*F*`` is foil and is not a collector number. ``*F*`` may also sit on a
+# line with no set.
 CARD_LINE_RE = re.compile(
     r"^(?:(?P<role>[A-Za-z ]+):\s*)?"
     r"(?P<qty>\d+)\s*(?:x\s*)?"
     r"(?P<name>.+?)"
-    r"(?:\s*\((?P<set>[A-Z0-9]+)\)(?:\s+[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)?(?:\s*\*F\*)?)?"
+    r"(?:"
+    r"\s*\((?P<set>[A-Z0-9]+)\)"
+    r"(?:\s+(?P<collector>[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:★|\*(?!F\*))?))?"
+    r")?"
+    r"(?:\s*(?P<foil>\*F\*))?"
     r"(?:\s*\[[^\]]*\])?"
     r"\s*$"
 )
@@ -69,6 +77,10 @@ class ParsedDeckLine:
     raw_line: str
     # Set code when the line carried one, e.g. "1 Sol Ring (C21) 263".
     set_code: str | None = None
+    # Collector number when the line carried one, including a trailing star.
+    collector_number: str | None = None
+    # True only when the line had ``*F*``. Absence is not nonfoil.
+    foil: bool = False
 
 
 def _single_line_url_candidate(text: str) -> str | None:
@@ -208,12 +220,15 @@ def _parse_card_line(
         return None
 
     set_code = match.group("set")
+    collector = match.group("collector")
     return ParsedDeckLine(
         quantity=int(match.group("qty")),
         name=name,
         role=parsed_role or default_role,
         raw_line=line,
         set_code=set_code.upper() if set_code else None,
+        collector_number=collector or None,
+        foil=match.group("foil") is not None,
     )
 
 

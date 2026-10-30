@@ -123,11 +123,13 @@ def format_card_stock_text(
     translator: Translator,
     *,
     is_basic_land: bool,
+    traits: str | None = None,
 ) -> str:
-    """Three lines for the selected-card column: inventory, free, lists.
+    """Three count lines, plus a trait line when some copy has one recorded.
 
     Basics are unlimited and are not stored as copies, so the first two
     lines use the unlimited label instead of a zero that would look missing.
+    The trait line is omitted for basics and when ``traits`` is empty.
     """
     if is_basic_land:
         inventory = translator.t("decks.cards.stock.unlimited")
@@ -135,10 +137,11 @@ def format_card_stock_text(
     else:
         inventory = str(stock.total_copies)
         free = str(stock.free_copies)
-    return "\n".join(
-        (
-            translator.t("decks.cards.stock.inventory").format(count=inventory),
-            translator.t("decks.cards.stock.free").format(count=free),
-            translator.t("decks.cards.stock.decks").format(count=stock.decks_using),
-        )
-    )
+    lines = [
+        translator.t("decks.cards.stock.inventory").format(count=inventory),
+        translator.t("decks.cards.stock.free").format(count=free),
+        translator.t("decks.cards.stock.decks").format(count=stock.decks_using),
+    ]
+    if traits and not is_basic_land:
+        lines.append(traits)
+    return "\n".join(lines)

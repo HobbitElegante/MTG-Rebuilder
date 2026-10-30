@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from mtg_rebuilder.api.scryfall_client import ScryfallClient
 from mtg_rebuilder.config import IMAGES_DIR
-from mtg_rebuilder.models import Card
+from mtg_rebuilder.models import Card, CardPrinting
 from mtg_rebuilder.repositories import CardRepository
 from mtg_rebuilder.services.scryfall_service import ScryfallService, card_from_scryfall
 
@@ -34,6 +34,24 @@ class ImageCacheStatus:
     collection_on_disk: int
     cached_with_uri: int
     cached_on_disk: int
+
+
+def preview_image_url(image_uri: str | None) -> str | None:
+    """Print-grid URLs are ``small``. The side preview wants ``normal``."""
+    if image_uri is None:
+        return None
+    cleaned = image_uri.strip()
+    if not cleaned:
+        return None
+    return cleaned.replace("/small/", "/normal/", 1)
+
+
+def printing_image_path(
+    printing_id: str,
+    images_dir: Path | None = None,
+) -> Path:
+    root = images_dir if images_dir is not None else IMAGES_DIR
+    return root / "prints" / f"{printing_id}.jpg"
 
 
 def image_path_for(
@@ -107,6 +125,29 @@ class CardImageService:
     def has_back_image(self, oracle_id: str) -> bool:
         card = self._cards.get(oracle_id)
         return bool(card is not None and card.image_uri_back)
+
+    def ensure_printing_image(self, printing_id: str) -> Path | None:
+        """Local normal-size image for one Scryfall printing.
+
+        Returns None when that printing has no picture or the download fails,
+        so the preview can fall back to the card's usual image.
+        """
+        safe = printing_id.strip()
+        if not safe or "/" in safe or ".." in safe:
+            return None
+        destination = printing_image_path(safe, self._images_dir)
+        if destination.is_file() and destination.stat().st_size > 0:
+            return destination
+        row = self._session.get(CardPrinting, safe)
+        image_uri = preview_image_url(row.image_uri if row is not None else None)
+        if not image_uri:
+            return None
+        try:
+            self._get_client().download_file(image_uri, destination)
+        except Exception:
+            destination.unlink(missing_ok=True)
+            return None
+        return destination
 
     def ensure_image(self, oracle_id: str, *, back: bool = False) -> Path | None:
         """Local path for one card face, downloading it on demand.

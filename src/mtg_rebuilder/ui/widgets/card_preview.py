@@ -24,18 +24,18 @@ PREVIEW_MIN_WIDTH = 250
 PREVIEW_ASPECT = 680 / 488
 _PIXMAP_CACHE_SIZE = 64
 
-_pixmap_cache: OrderedDict[tuple[str, bool], QPixmap] = OrderedDict()
+_pixmap_cache: OrderedDict[tuple[str, str], QPixmap] = OrderedDict()
 _owner_ids = count(1)
 
 
-def _cached_pixmap(key: tuple[str, bool]) -> QPixmap | None:
+def _cached_pixmap(key: tuple[str, str]) -> QPixmap | None:
     pixmap = _pixmap_cache.get(key)
     if pixmap is not None:
         _pixmap_cache.move_to_end(key)
     return pixmap
 
 
-def _cache_pixmap(key: tuple[str, bool], pixmap: QPixmap) -> None:
+def _cache_pixmap(key: tuple[str, str], pixmap: QPixmap) -> None:
     _pixmap_cache[key] = pixmap
     _pixmap_cache.move_to_end(key)
     while len(_pixmap_cache) > _PIXMAP_CACHE_SIZE:
@@ -45,22 +45,31 @@ def _cache_pixmap(key: tuple[str, bool], pixmap: QPixmap) -> None:
 class _ImageWorker(QThread):
     """Resolves one card face off the GUI thread (disk hit or download)."""
 
-    resolved = Signal(str, bool, object, bool)
+    resolved = Signal(str, bool, object, bool, str)
 
-    def __init__(self, oracle_id: str, back: bool) -> None:
+    def __init__(
+        self, oracle_id: str, back: bool, printing_id: str | None = None
+    ) -> None:
         super().__init__()
         self._oracle_id = oracle_id
         self._back = back
+        self._printing_id = printing_id
 
     def run(self) -> None:
         path = None
         has_back = False
+        shown_printing = ""
         try:
             with get_session() as session:
                 images = CardImageService(session)
                 try:
-                    path = images.ensure_image(self._oracle_id, back=self._back)
-                    has_back = images.has_back_image(self._oracle_id)
+                    if self._printing_id:
+                        path = images.ensure_printing_image(self._printing_id)
+                        if path is not None:
+                            shown_printing = self._printing_id
+                    if path is None:
+                        path = images.ensure_image(self._oracle_id, back=self._back)
+                        has_back = images.has_back_image(self._oracle_id)
                 finally:
                     images.close()
         except Exception:
@@ -72,6 +81,7 @@ class _ImageWorker(QThread):
             self._back,
             None if image.isNull() else image,
             has_back,
+            shown_printing,
         )
 
 
@@ -83,15 +93,21 @@ class _ImageLoader(QObject):
     (commander plus secondary) still each get an image.
     """
 
-    resolved = Signal(str, bool, object, bool)
+    resolved = Signal(str, bool, object, bool, str)
 
     def __init__(self) -> None:
         super().__init__()
-        self._pending: dict[int, tuple[str, bool]] = {}
+        self._pending: dict[int, tuple[str, bool, str | None]] = {}
         self._active: _ImageWorker | None = None
 
-    def request(self, owner: int, oracle_id: str, back: bool) -> None:
-        self._pending[owner] = (oracle_id, back)
+    def request(
+        self,
+        owner: int,
+        oracle_id: str,
+        back: bool,
+        printing_id: str | None = None,
+    ) -> None:
+        self._pending[owner] = (oracle_id, back, printing_id)
         self._start_next()
 
     def cancel(self, owner: int) -> None:
@@ -101,8 +117,8 @@ class _ImageLoader(QObject):
         if self._active is not None or not self._pending:
             return
         owner = next(iter(self._pending))
-        oracle_id, back = self._pending.pop(owner)
-        worker = _ImageWorker(oracle_id, back)
+        oracle_id, back, printing_id = self._pending.pop(owner)
+        worker = _ImageWorker(oracle_id, back, printing_id)
         worker.resolved.connect(self.resolved)
         worker.finished.connect(self._on_worker_finished)
         self._active = worker
@@ -140,6 +156,7 @@ class CardPreviewPanel(QWidget):
         self._translator = translator
         self._owner = next(_owner_ids)
         self._oracle_id: str | None = None
+        self._printing_id: str | None = None
         self._card_name = ""
         self._showing_back = False
         self._has_back = False
@@ -182,10 +199,21 @@ class CardPreviewPanel(QWidget):
         if self._pixmap is None:
             self._render()
 
-    def set_card(self, oracle_id: str | None, name: str = "") -> None:
-        if oracle_id == self._oracle_id and name == self._card_name:
+    def set_card(
+        self,
+        oracle_id: str | None,
+        name: str = "",
+        printing_id: str | None = None,
+    ) -> None:
+        printing_id = printing_id or None
+        if (
+            oracle_id == self._oracle_id
+            and name == self._card_name
+            and printing_id == self._printing_id
+        ):
             return
         self._oracle_id = oracle_id or None
+        self._printing_id = printing_id
         self._card_name = name
         self._showing_back = False
         self._has_back = False
@@ -195,6 +223,11 @@ class CardPreviewPanel(QWidget):
             image_loader().cancel(self._owner)
         self._render()
 
+    def _cache_key(self) -> tuple[str, str]:
+        if self._printing_id:
+            return ("printing", self._printing_id)
+        return (self._oracle_id or "", "back" if self._showing_back else "front")
+
     def clear(self) -> None:
         self.set_card(None)
 
@@ -203,7 +236,7 @@ class CardPreviewPanel(QWidget):
             self._show_message(self._translator.t("preview.empty"))
             return
 
-        cached = _cached_pixmap((self._oracle_id, self._showing_back))
+        cached = _cached_pixmap(self._cache_key())
         if cached is not None:
             self._pixmap = cached
             self._rescale()
@@ -211,7 +244,12 @@ class CardPreviewPanel(QWidget):
 
         self._pixmap = None
         self._show_message(self._translator.t("preview.loading"))
-        image_loader().request(self._owner, self._oracle_id, self._showing_back)
+        image_loader().request(
+            self._owner,
+            self._oracle_id,
+            False if self._printing_id else self._showing_back,
+            self._printing_id,
+        )
 
     def _on_resolved(
         self,
@@ -219,21 +257,36 @@ class CardPreviewPanel(QWidget):
         back: bool,
         image: object,
         has_back: bool,
+        printing_id: str,
     ) -> None:
         if oracle_id != self._oracle_id:
             return
+        wanted = self._printing_id or ""
+        if printing_id != wanted:
+            if not (wanted and printing_id == ""):
+                return
+            # That printing has no picture. Show the usual card image.
+            self._printing_id = None
 
+        key = (
+            ("printing", printing_id)
+            if printing_id
+            else (oracle_id, "back" if back else "front")
+        )
         if isinstance(image, QImage):
-            _cache_pixmap((oracle_id, back), QPixmap.fromImage(image))
+            _cache_pixmap(key, QPixmap.fromImage(image))
 
-        if has_back != self._has_back:
-            self._has_back = has_back
-            self._flip_button.setVisible(has_back)
+        if not self._printing_id:
+            if has_back != self._has_back:
+                self._has_back = has_back
+                self._flip_button.setVisible(has_back)
+            if back != self._showing_back:
+                return
+        else:
+            self._has_back = False
+            self._flip_button.setVisible(False)
 
-        if back != self._showing_back:
-            return
-
-        cached = _cached_pixmap((oracle_id, back))
+        cached = _cached_pixmap(self._cache_key())
         if cached is None:
             self._show_message(self._translator.t("preview.missing"))
             return

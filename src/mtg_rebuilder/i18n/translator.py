@@ -183,13 +183,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.add_list.not_trackable": (
             "Basics and tokens are not tracked in inventory. Choose another card."
         ),
-        "inventory.edit_copies": "Edit copy count",
+        "inventory.edit_copies": "Edit copies",
         "inventory.add_dialog.title": "Add card to collection",
         "inventory.add_dialog.search": "Search card name",
         "inventory.add_dialog.copies": "Copies to add",
         "inventory.add_dialog.confirm": "Add copies",
         "inventory.add_dialog.no_selection": "Select a card from the search results.",
-        "inventory.edit_dialog.title": "Edit copy count",
+        "inventory.edit_dialog.title": "Edit copies",
+        "inventory.edit_dialog.printing": "Printing of each copy",
         "inventory.edit_dialog.card": "Card",
         "inventory.edit_dialog.total": "Total copies",
         "inventory.edit_dialog.assigned_note": (
@@ -215,17 +216,41 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.table.no_decks": "—",
         "inventory.editions.title": "Editions",
         "inventory.editions.hint": (
-            "Assign a set code to each physical copy. Leave “-” for copies you "
-            "have not identified yet."
+            "Finish, language, and condition stay as menus. The print opens a grid "
+            "of every art: choosing one records the set and the collector number "
+            "with it. Leave “-” for anything you have not identified yet. Apply to "
+            "all copies any menu that is not “-”, and a print only after you pick one."
         ),
         "inventory.editions.copy": "Copy",
         "inventory.editions.edition": "Edition",
+        "inventory.editions.finish": "Finish",
+        "inventory.editions.language": "Language",
+        "inventory.editions.condition": "Condition",
+        "inventory.editions.collector": "Number",
+        "inventory.editions.art": "Art",
+        "inventory.prints.column": "Print",
+        "inventory.prints.title": "Prints",
+        "inventory.prints.hint": (
+            "Each picture is one printing. Choosing it records the set and the "
+            "collector number as well."
+        ),
+        "inventory.prints.none": "No specific print",
+        "inventory.prints.type": "Or type the set and number",
+        "inventory.prints.empty": (
+            "No prints are cached and Scryfall did not answer. You can still type "
+            "the set and the number."
+        ),
+        "inventory.finish.nonfoil": "Nonfoil",
+        "inventory.finish.foil": "Foil",
+        "inventory.finish.etched": "Etched",
+        "inventory.finish.glossy": "Glossy",
         "inventory.editions.copy_label": "Copy {number} — {where}",
         "inventory.editions.apply_all": "Apply to all",
         "inventory.editions.prompt_title": "Editions of the cards you moved",
         "inventory.editions.prompt_hint": (
-            "These copies are now in {deck} and have no edition recorded. Fill in "
-            "the ones you know; the rest stay as “-”."
+            "These copies are now in {deck} and have no edition recorded. Open Print "
+            "to pick the art, set, and number; the rest stay as “-”. Finish, "
+            "language, and condition on these same copies are optional too."
         ),
         "inventory.editions.skip": "Skip",
         "decks.import": "Import new list",
@@ -413,6 +438,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Free = copies already in inventory. Raise it only if you need to add "
             "physical copies (for example the lands that were missing from the list)."
         ),
+        "decks.update.prints.title": "Print details on the list",
+        "decks.update.prints.hint": (
+            "This list describes a set, number, or foil that your copies do not "
+            "have yet. For each row, set how many are new physical copies. "
+            "Leave 0 when they are copies you already have: those stay as they "
+            "are. Card details are edited in Inventory."
+        ),
+        "decks.update.prints.details": "On the list",
+        "decks.update.prints.new": "New copies",
+        "decks.update.prints.continue": "Continue",
         "decks.delete_list": "Delete list",
         "decks.delete.confirm.title": "Delete deck list",
         "decks.delete.confirm.question": (
@@ -897,13 +932,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.add_list.not_trackable": (
             "Las básicas y tokens no se llevan en el inventario. Elige otra carta."
         ),
-        "inventory.edit_copies": "Editar el número de copias",
+        "inventory.edit_copies": "Editar copias",
         "inventory.add_dialog.title": "Agregar carta a la colección",
         "inventory.add_dialog.search": "Buscar carta por nombre",
         "inventory.add_dialog.copies": "Copias a agregar",
         "inventory.add_dialog.confirm": "Agregar copias",
         "inventory.add_dialog.no_selection": "Selecciona una carta de los resultados.",
-        "inventory.edit_dialog.title": "Editar el número de copias",
+        "inventory.edit_dialog.title": "Editar copias",
+        "inventory.edit_dialog.printing": "Impresión de cada copia",
         "inventory.edit_dialog.card": "Carta",
         "inventory.edit_dialog.total": "Copias totales",
         "inventory.edit_dialog.assigned_note": (
@@ -929,17 +965,41 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "inventory.table.no_decks": "—",
         "inventory.editions.title": "Ediciones",
         "inventory.editions.hint": (
-            "Asigna un código de set a cada copia física. Deja «-» en las copias "
-            "que todavía no identificaste."
+            "Acabado, idioma y estado siguen en menús. La impresión abre una malla "
+            "con cada arte: al elegir uno quedan el set y el número de coleccionista. "
+            "Deja «-» en lo que todavía no identificaste. Aplicar a todas copia "
+            "cualquier menú que no sea «-», y la impresión solo si la elegiste."
         ),
         "inventory.editions.copy": "Copia",
         "inventory.editions.edition": "Edición",
+        "inventory.editions.finish": "Acabado",
+        "inventory.editions.language": "Idioma",
+        "inventory.editions.condition": "Estado",
+        "inventory.editions.collector": "Número",
+        "inventory.editions.art": "Arte",
+        "inventory.prints.column": "Impresión",
+        "inventory.prints.title": "Impresiones",
+        "inventory.prints.hint": (
+            "Cada imagen es una impresión. Al elegirla quedan también el set y el "
+            "número de coleccionista."
+        ),
+        "inventory.prints.none": "Sin impresión concreta",
+        "inventory.prints.type": "O escribe el set y el número",
+        "inventory.prints.empty": (
+            "No hay impresiones guardadas y Scryfall no respondió. Igual puedes "
+            "escribir el set y el número."
+        ),
+        "inventory.finish.nonfoil": "Sin foil",
+        "inventory.finish.foil": "Foil",
+        "inventory.finish.etched": "Etched",
+        "inventory.finish.glossy": "Glossy",
         "inventory.editions.copy_label": "Copia {number} — {where}",
         "inventory.editions.apply_all": "Aplicar a todas",
         "inventory.editions.prompt_title": "Ediciones de las cartas que moviste",
         "inventory.editions.prompt_hint": (
             "Estas copias quedaron en {deck} y no tienen edición registrada. "
-            "Completa las que sepas; el resto queda en «-»."
+            "Abre Impresión para elegir el arte, el set y el número; el resto queda "
+            "en «-». Acabado, idioma y estado de esas mismas copias también son opcionales."
         ),
         "inventory.editions.skip": "Omitir",
         "decks.import": "Importar listado nuevo",
@@ -1129,6 +1189,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Libres = copias que ya tienes en inventario. Súbelas solo si necesitas "
             "agregar copias físicas (por ejemplo las tierras que faltaban en el listado)."
         ),
+        "decks.update.prints.title": "Datos de impresión del listado",
+        "decks.update.prints.hint": (
+            "Este listado trae un set, un número o foil que tus copias todavía "
+            "no tienen. En cada fila, indica cuántas son copias físicas nuevas. "
+            "Deja 0 si son copias que ya tienes: esas no se modifican. "
+            "Los datos de la carta se editan en Inventario."
+        ),
+        "decks.update.prints.details": "En el listado",
+        "decks.update.prints.new": "Copias nuevas",
+        "decks.update.prints.continue": "Continuar",
         "decks.delete_list": "Eliminar listado",
         "decks.delete.confirm.title": "Eliminar listado",
         "decks.delete.confirm.question": (

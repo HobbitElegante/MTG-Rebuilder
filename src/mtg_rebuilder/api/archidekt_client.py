@@ -18,6 +18,15 @@ _BACKGROUND_CATEGORIES = frozenset({"background"})
 
 
 @dataclass(frozen=True)
+class _ListedCard:
+    name: str
+    quantity: int
+    set_code: str | None = None
+    collector_number: str | None = None
+    foil: bool = False
+
+
+@dataclass(frozen=True)
 class ArchidektDeckExport:
     """Deck metadata + MTGO-style text ready for ImportService."""
 
@@ -66,11 +75,11 @@ def deck_export_from_payload(payload: dict[str, Any]) -> ArchidektDeckExport:
     name = str(payload.get("name") or "Archidekt deck").strip() or "Archidekt deck"
 
     included_by_category = _included_map(payload.get("categories"))
-    commanders: list[tuple[str, int, str | None]] = []
-    partners: list[tuple[str, int, str | None]] = []
-    companions: list[tuple[str, int, str | None]] = []
-    backgrounds: list[tuple[str, int, str | None]] = []
-    mainboard: list[tuple[str, int, str | None]] = []
+    commanders: list[_ListedCard] = []
+    partners: list[_ListedCard] = []
+    companions: list[_ListedCard] = []
+    backgrounds: list[_ListedCard] = []
+    mainboard: list[_ListedCard] = []
 
     cards = payload.get("cards")
     if not isinstance(cards, list):
@@ -82,18 +91,17 @@ def deck_export_from_payload(payload: dict[str, Any]) -> ArchidektDeckExport:
         parsed = _parse_card_entry(entry, included_by_category)
         if parsed is None:
             continue
-        card_name, quantity, set_code, bucket = parsed
-        item = (card_name, quantity, set_code)
+        card, bucket = parsed
         if bucket == "commander":
-            commanders.append(item)
+            commanders.append(card)
         elif bucket == "partner":
-            partners.append(item)
+            partners.append(card)
         elif bucket == "companion":
-            companions.append(item)
+            companions.append(card)
         elif bucket == "background":
-            backgrounds.append(item)
+            backgrounds.append(card)
         else:
-            mainboard.append(item)
+            mainboard.append(card)
 
     # Archidekt often tags Partner decks with two "Commander" categories.
     if len(commanders) > 1 and not partners:
@@ -105,37 +113,37 @@ def deck_export_from_payload(payload: dict[str, Any]) -> ArchidektDeckExport:
     secondary_role: str | None = None
     secondary_name: str | None = None
 
-    for index, (card_name, quantity, set_code) in enumerate(commanders):
+    for index, card in enumerate(commanders):
         if index == 0:
-            commander_name = card_name
-            lines.append(_format_line("Commander", quantity, card_name, set_code))
+            commander_name = card.name
+            lines.append(_format_line("Commander", card))
         else:
             if secondary_role is None:
                 secondary_role = "partner"
-                secondary_name = card_name
-            lines.append(_format_line("Partner", quantity, card_name, set_code))
+                secondary_name = card.name
+            lines.append(_format_line("Partner", card))
 
-    for card_name, quantity, set_code in partners:
+    for card in partners:
         if secondary_role is None:
             secondary_role = "partner"
-            secondary_name = card_name
-        lines.append(_format_line("Partner", quantity, card_name, set_code))
+            secondary_name = card.name
+        lines.append(_format_line("Partner", card))
 
-    for card_name, quantity, set_code in companions:
+    for card in companions:
         if secondary_role is None:
             secondary_role = "companion"
-            secondary_name = card_name
-        lines.append(_format_line("Companion", quantity, card_name, set_code))
+            secondary_name = card.name
+        lines.append(_format_line("Companion", card))
 
-    for card_name, quantity, set_code in backgrounds:
+    for card in backgrounds:
         if secondary_role is None:
             secondary_role = "background"
-            secondary_name = card_name
-        lines.append(_format_line("Background", quantity, card_name, set_code))
+            secondary_name = card.name
+        lines.append(_format_line("Background", card))
 
-    mainboard.sort(key=lambda item: item[0].casefold())
-    for card_name, quantity, set_code in mainboard:
-        lines.append(_format_line(None, quantity, card_name, set_code))
+    mainboard.sort(key=lambda item: item.name.casefold())
+    for card in mainboard:
+        lines.append(_format_line(None, card))
 
     return ArchidektDeckExport(
         deck_id=deck_id,
@@ -171,7 +179,7 @@ def _included_map(categories: Any) -> dict[str, bool]:
 def _parse_card_entry(
     entry: dict[str, Any],
     included_by_category: dict[str, bool],
-) -> tuple[str, int, str | None, str] | None:
+) -> tuple[_ListedCard, str] | None:
     categories = [
         str(name).casefold()
         for name in (entry.get("categories") or [])
@@ -221,6 +229,15 @@ def _parse_card_entry(
     edition = card.get("edition")
     if isinstance(edition, dict) and edition.get("editioncode"):
         set_code = str(edition["editioncode"]).upper()
+    raw_number = card.get("collectorNumber")
+    if raw_number is None:
+        raw_number = card.get("collector_number")
+    collector = (
+        raw_number.strip()
+        if isinstance(raw_number, str) and raw_number.strip()
+        else None
+    )
+    foil = _is_foil(entry) or _is_foil(card)
 
     if is_companion_flag or any(cat in _COMPANION_CATEGORIES for cat in categories):
         bucket = "companion"
@@ -233,18 +250,33 @@ def _parse_card_entry(
     else:
         bucket = "main"
 
-    return card_name, quantity, set_code, bucket
+    return (
+        _ListedCard(
+            name=card_name,
+            quantity=quantity,
+            set_code=set_code,
+            collector_number=collector,
+            foil=foil,
+        ),
+        bucket,
+    )
 
 
-def _format_line(
-    role: str | None,
-    quantity: int,
-    name: str,
-    set_code: str | None,
-) -> str:
-    body = f"{quantity} {name}"
-    if set_code:
-        body = f"{body} ({set_code})"
+def _is_foil(payload: dict[str, Any]) -> bool:
+    if payload.get("foil") is True or payload.get("isFoil") is True:
+        return True
+    finish = payload.get("finish")
+    return isinstance(finish, str) and finish.strip().casefold() == "foil"
+
+
+def _format_line(role: str | None, card: _ListedCard) -> str:
+    body = f"{card.quantity} {card.name}"
+    if card.set_code:
+        body = f"{body} ({card.set_code})"
+        if card.collector_number:
+            body = f"{body} {card.collector_number}"
+    if card.foil:
+        body = f"{body} *F*"
     if role:
         return f"{role}: {body}"
     return body

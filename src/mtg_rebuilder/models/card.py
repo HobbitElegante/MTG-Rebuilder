@@ -1,4 +1,14 @@
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from mtg_rebuilder.models.base import Base
@@ -52,15 +62,51 @@ class CardPrint(Base):
     rarity: Mapped[str | None] = mapped_column(String(16))
 
 
+class CardPrinting(Base):
+    """One Scryfall printing, cached for the art combo.
+
+    Unlike ``CardPrint`` this is not collapsed to a set: two collector numbers
+    in the same set are two rows. ``id`` is the Scryfall card id. No index on
+    ``oracle_id`` until a real filter's EXPLAIN shows a scan worth indexing.
+    """
+
+    __tablename__ = "card_printings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    oracle_id: Mapped[str] = mapped_column(
+        ForeignKey("cards.oracle_id"), nullable=False
+    )
+    set_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    collector_number: Mapped[str | None] = mapped_column(String(32))
+    illustration_id: Mapped[str | None] = mapped_column(String(36))
+    label: Mapped[str | None] = mapped_column(String(255))
+    # Scryfall ``small`` image, for the print grid. Empty when the printing
+    # was fetched and has no image. NULL means this row predates that lookup.
+    image_uri: Mapped[str | None] = mapped_column(String(512))
+
+
 class CardCopy(Base):
     __tablename__ = "card_copies"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    card_id: Mapped[str] = mapped_column(ForeignKey("cards.oracle_id"), nullable=False)
+    card_id: Mapped[str] = mapped_column(
+        ForeignKey("cards.oracle_id"), index=True, nullable=False
+    )
     edition: Mapped[str | None] = mapped_column(String(16))
     language: Mapped[str | None] = mapped_column(String(8))
+    # Legacy NOT NULL flag. The app reads and writes ``finish`` instead:
+    # false was the column default, not a recorded nonfoil.
     foil: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # nonfoil / foil / etched / glossy, or NULL when the user has not said.
+    finish: Mapped[str | None] = mapped_column(String(16))
     condition: Mapped[str | None] = mapped_column(String(32))
+    collector_number: Mapped[str | None] = mapped_column(String(32))
+    # Scryfall card id of this printing (set + number + art). Not a FK:
+    # the catalog row is optional and fetched on demand.
+    printing_id: Mapped[str | None] = mapped_column(String(36))
+    # Touched when a print fact changes, so the preview can follow the copy
+    # the user edited last. NULL on rows that have not been edited since.
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     location: Mapped[str | None] = mapped_column(String(128))
 
     card: Mapped["Card"] = relationship(back_populates="copies")

@@ -6,19 +6,19 @@ Desktop application to manage a physical Magic: The Gathering Commander collecti
 
 **MTG-Rebuilder** (repo / package / binaries). The window title remains *MTG Commander Collection Manager*.
 
-Prebuilt **Downloads** track **`v1.3.0`** (online Scryfall search in Inventory, copy and deck counts for the selected card in Decks, fix for lists that repeat a card on two lines).
+Prebuilt **Downloads** track **`v1.4.0`** (per-copy finish, language, condition, and a visual print picker; the side preview and the Inventory image grid show that printing).
 
 ### Collection
 
 - Physical inventory in SQLite, grouped by card: total / free / assigned
-- Inventory table: Name · CMC · **Mana** (printed cost as Scryfall symbols) · Colors (WUBRG as Scryfall mana symbols) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via Edit copy count)
+- Inventory table: Name · CMC · **Mana** (printed cost as Scryfall symbols) · Colors (WUBRG as Scryfall mana symbols) · **Rarity** (C/U/R/M; sort C→U→R→M) · Total · Free · Assigned · In decks; sortable columns; **read-only cells** (edit only via **Edit copies**)
 - Search by card name; **Filter** dialog for free copies, type, **subtype (Elf, Aura…)**, armed-deck exclusion, color identity (**at most / exactly / at least**, plus **colorless only**), **rarity (C/U/R/M)**, and mana value
 - The Filter button counts what is on (`Filter (3)`) and every active filter shows up as a **chip** above the table, so you can drop one without reopening the dialog
 - **Scryfall search** *(online only)*: a round Scryfall logo at the right of the search bar switches the box to full Scryfall syntax, tags included (`otag:ramp`, `art:`, `function:`…); press Enter or the magnifier to run it, and only cards you own are shown
-- **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; arrow-key navigation (Right continues on the next row) plus Home/End; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview
+- **Image view** *(requires card images on)*: virtualized grid ≤5 faces/row; on-demand download as tiles appear; arrow-key navigation (Right continues on the next row) plus Home/End; **Sort by** + Asc/Desc without leaving the grid (same order as the table); field list under the side preview. A tile uses the printing recorded on a physical copy when one exists
 - Add a single card or paste a whole list (multi-format / Moxfield or Archidekt URL) into free inventory
-- Optional **edition tracking**: turn it on in Browse → Customize to get an Edition column, per-copy set codes, and a prompt after rebuilding a deck
-- Card image preview beside the table (on-demand download; flip for double-faced cards)
+- Optional **edition tracking**: turn it on in Browse → Customize to show the Edition column and to ask for a set after rebuilding a deck. **Edit copies** is always available and records finish, language, condition, and the printing. The printing opens a grid of arts (set and collector number come with the picture you pick). Language codes show in capitals (`EN`, `ES`)
+- Card image preview beside the table (on-demand download; flip for double-faced cards). When a copy has a printing, the preview shows that art; if several copies differ, it follows the one updated last
 
 ### Decks
 
@@ -26,11 +26,11 @@ Prebuilt **Downloads** track **`v1.3.0`** (online Scryfall search in Inventory, 
 - Armed / dismantled status with automatic physical-copy assignment
 - **Format tag** per deck (default **EDH / Commander**; stub Other with no rules yet). Shown in the deck list and details; picker on import and Edit name / commander
 - Command zone: commander plus optional Partner / Companion / Background
-- **Edit list** (free size/quantities; `{current}/{target}` with a soft ⚠ if the format size does not match; never blocks save), **Update list** (paste/file/URL then the same qty + Free-copies table so you can add physical copies or keep inventory), export (5 formats), delete
+- **Edit list** (free size/quantities; `{current}/{target}` with a soft ⚠ if the format size does not match; never blocks save), **Update list** (paste/file/URL then the same qty + Free-copies table so you can add physical copies or keep inventory; if the list names a set, number, or foil that owned copies do not already record, you are asked how many of those are new physical copies), export (5 formats), delete
 - Search, filter by **format** (All / EDH·Commander for now) and status, ephemeral sort (number / name / armed status), and reorder decks (Move up/down when sorted by number ascending)
 - Selected deck: commander preview, full card list, and preview of the selected card (Partner / Companion / Background appear in the list)
 - Card list display controls above the selected-card preview: sort by mana value or alphabetically (ascending/descending) and **group by type** (Command zone / Creatures / Instants / … / Lands headers)
-- Selected card, above its image: copies in inventory, free copies, and how many deck lists include it (basics show “unlimited” for the first two)
+- Selected card, above its image: copies in inventory, free copies, and how many deck lists include it (basics show “unlimited” for the first two). A fourth line appears when a copy has finish, language, condition, or a collector number recorded
 - Deck statistics around the commander: lands / x̄ mana value (with and without lands) / type breakdown / mana pips above, and a mana-curve bar chart below (creatures vs non-creature, lands excluded); both hide automatically when the window is small
 - Advisory ⚠ that never blocks: Scryfall Commander legality, game-rule checks, and optional **house banlist** (Customize); legality/rules visibility is toggleable
 - Lock / unlock a deck so Optimize will not dismantle it (ɸ in the list)
@@ -205,17 +205,19 @@ alembic.ini       # Dev CLI for new revisions (`alembic -c alembic.ini …`)
 
 **Changing the schema:** add a revision with `alembic -c alembic.ini revision --autogenerate -m "…"`, review it under `database/alembic/versions/`, then launch the app (migrations run on startup).
 
-## Latest (v1.3.0)
+## Latest (v1.4.0)
 
-**v1.3.0** brings Scryfall search to Inventory and shows how available a card is right from a deck list.
+**v1.4.0** lets you record the physical printing of each copy and shows that art in Inventory.
 
-- **Scryfall search in Inventory** *(online only)*: a round Scryfall logo next to the search bar switches it to full Scryfall syntax, tags included (`otag:ramp`, `art:`, `function:`…). Press Enter or the magnifier to run it; only cards you own are shown, still narrowed by the active filter chips. Every result page is read with progress and a stop button; the logo hides when Scryfall is unreachable.
-- **Card stock in Decks:** above the selected card's image — copies in inventory, free copies, and how many deck lists include it (basics show “unlimited”), so you can judge how easy a dismantled deck is to rebuild without opening Optimize
-- **Import fix:** a list with the same card on two lines (e.g. two printings of Island) no longer fails with a database error
+- **Edit copies:** finish, language, and condition stay as menus (language codes in capitals). **Print** opens a grid of every art, in the spirit of Scryfall's “View all prints”. Choosing a picture records the set and the collector number with it. The same grid is offered after Optimize for copies that still have no set
+- **Preview and image grid** follow that printing. If several copies of the card name different printings, the one you updated last is the picture. The usual card image remains when no copy has a printing
+- **Deck list update:** when the pasted list names a set, number, or foil that your copies do not already record, the app asks how many of those are new physical copies (the default is none, so inventory is not filled in by surprise)
+- **Also in this tag, since v1.3.0:** Viable plans can be filtered by several decks at once; startup no longer measures the whole image cache; lookup indexes on copies, deck lists, and assignments
+- **v1.3.0:** Scryfall search in Inventory (online, full syntax); card stock above the selected card in Decks; import fix when the same card appears on two lines
 - **v1.2.1:** Inventory Mana column; full mana-symbol set (hybrid / Phyrexian / snow / 0–20); Windows `.exe` file icon; Viable plans *Largest number* ~60 s → ~0.1 s
 - **v1.2.0:** Inventory filter chips + counter; color identity modes (at most / exactly / at least) and colorless-only; CMC guards; picker feedback; Scryfall mana symbols; Qt window icon
 - **v1.1.1:** Inventory Image view empty-block fix, keyboard navigation, loading placeholders
 - **v1.1.0:** free-size **Edit list**; per-deck **format tag**; Decks **Format** filter; **Update list** → qty/Free dialog
 - **v1.0.0:** first stable **MTG-Rebuilder** rename; Inventory **Image view**; Linux `.desktop` install; Optimize **Viable plans**; ASCII **MTG-R**
 
-**Next:** editions v2 · real rules for non-Commander formats · Optimize advanced (priorities / cards moved / plan stats / print preference).
+**Next:** real rules for non-Commander formats · Optimize advanced (priorities / cards moved / plan stats / which physical copy to move).
